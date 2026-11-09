@@ -23,8 +23,8 @@ android {
     applicationId = "com.highrise14752.play"
         minSdk = 26
         targetSdk = 36
-        versionCode = 10
-        versionName = "1.1.2 "
+        versionCode = 11
+        versionName = "1.1.2-play.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -104,6 +104,14 @@ android {
             applicationIdSuffix = ".debug"
             isDebuggable = true
         }
+        create("optimized") {
+            initWith(getByName("release"))
+            // Locally installable optimized build; updates the earlier debug APK.
+            applicationIdSuffix = ".debug"
+            isDebuggable = false
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("release")
+        }
     }
 
     compileOptions {
@@ -152,6 +160,14 @@ android {
 
 kotlin {
     jvmToolchain(21)
+}
+
+tasks.register<Copy>("exportPlayApk") {
+    dependsOn("assembleUniversalOptimized")
+    from(layout.buildDirectory.dir("outputs/apk/universal/optimized"))
+    include("*.apk")
+    into(layout.buildDirectory.dir("outputs/play"))
+    rename { "Play.apk" }
 }
 
 ksp {

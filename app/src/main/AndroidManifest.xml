@@ -70,6 +70,9 @@
 
                 <data
                     android:host="together"
+                    android:scheme="play" />
+                <data
+                    android:host="together"
                     android:scheme="velune" />
             </intent-filter>
 

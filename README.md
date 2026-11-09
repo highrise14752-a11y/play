@@ -27,6 +27,10 @@ cd play
 
 On Windows, use `gradlew.bat :app:assembleUniversalDebug`. Configure the Android SDK in your local `local.properties` file or through `ANDROID_HOME`. Optional integration keys are read from local properties or environment variables; see `app/build.gradle.kts`.
 
+For daily use, build `./gradlew :app:assembleUniversalOptimized` (all CPU architectures) or `./gradlew :app:assembleArm64Optimized` (ARM64 phones). These enable the release optimizer and resource shrinking, disable debugging, and use the local debug signing key so they can update the earlier debug APK. Keep this key stable for future updates. Debug builds include development tooling and are unsuitable for comparing release size or performance.
+
+Run `./gradlew :app:exportPlayApk` to write the installable file as `app/build/outputs/play/Play.apk`. In-app labels, including debug builds, use **Play**. New listening-session links use `play://`; older invitation links remain supported.
+
 The Android application ID is `com.highrise14752.play`. No Play APK has been released yet. Updates will use [this repository's releases](https://github.com/highrise14752-a11y/play/releases). Some inherited online integrations still depend on upstream services and their configuration.
 
 ## Branding

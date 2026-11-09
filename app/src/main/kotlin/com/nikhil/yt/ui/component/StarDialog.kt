@@ -54,7 +54,7 @@ fun StarDialog(
         text = {
             Column {
                 Text(
-                    text = "Enjoying Play? Give this project a star on GitHub. Play is based on Velune, originally developed by Nikhil Vishwakarma. Thanks for supporting open-source music!",
+                    text = "Enjoying Play? Give this project a star on GitHub. Thanks for supporting open-source music!",
                     style = MaterialTheme.typography.bodyMedium,
                 )
             }

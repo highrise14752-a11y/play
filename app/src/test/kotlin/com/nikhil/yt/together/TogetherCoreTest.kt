@@ -22,8 +22,10 @@ class TogetherCoreTest {
                 sessionKey = "key456",
             )
         val encoded = TogetherLink.encode(join)
+        assertTrue(encoded.startsWith("play://together?"))
         val decoded = TogetherLink.decode(encoded)
         assertEquals(join, decoded)
+        assertEquals(join, TogetherLink.decode(encoded.replaceFirst("play://", "velune://")))
     }
 
     @Test

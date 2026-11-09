@@ -2113,7 +2113,7 @@ class MusicService :
                 return@launch
             }
 
-            val togetherToken = "PlayAdminToken"
+            val togetherToken = "VeluneAdminToken"
             if (togetherToken == null) {
                 scope.launch(SilentHandler) {
                     togetherSessionState.value =
