@@ -574,7 +574,7 @@ if (intervalSelection == "Custom") {
         )
         val (button2Label, onButton2LabelChange) = rememberPreference(
             key = DiscordActivityButton2LabelKey,
-            defaultValue = "Go to Velune"
+            defaultValue = "Go to Play"
         )
         val (button2Enabled, onButton2EnabledChange) = rememberPreference(
             key = DiscordActivityButton2EnabledKey,
@@ -962,7 +962,7 @@ fun RichPresence(
    val (button1Label) = rememberPreference(DiscordActivityButton1LabelKey, "Listen on YouTube Music")
    val (button1Enabled) = rememberPreference(DiscordActivityButton1EnabledKey, true)
 
-   val (button2Label) = rememberPreference(DiscordActivityButton2LabelKey, "Go to Velune")
+   val (button2Label) = rememberPreference(DiscordActivityButton2LabelKey, "Go to Play")
    val (button2Enabled) = rememberPreference(DiscordActivityButton2EnabledKey, true)
 
 // Button URL sources + custom
@@ -970,7 +970,7 @@ fun RichPresence(
    val (button1CustomUrl) = rememberPreference(DiscordActivityButton1CustomUrlKey, "")
 
    val (button2UrlSource) = rememberPreference(DiscordActivityButton2UrlSourceKey, "custom")
-   val (button2CustomUrl) = rememberPreference(DiscordActivityButton2CustomUrlKey, "https://github.com/nikhilvishwakarma00/Velune")
+   val (button2CustomUrl) = rememberPreference(DiscordActivityButton2CustomUrlKey, "https://github.com/highrise14752-a11y/play")
 
 // Large text source + custom
    val (largeTextSource) = rememberPreference(DiscordLargeTextSourceKey, "album")
@@ -1002,7 +1002,7 @@ fun RichPresence(
     ActivitySource.ARTIST -> "$activityVerb ${song?.artists?.firstOrNull()?.name ?: "Artist"}"
     ActivitySource.ALBUM -> "$activityVerb ${song?.album?.title ?: song?.song?.albumName ?: "Album"}"
     ActivitySource.SONG -> "$activityVerb ${song?.song?.title ?: "Song"}"
-    ActivitySource.APP -> "$activityVerb Velune"
+    ActivitySource.APP -> "$activityVerb Play"
    }
 
 
@@ -1041,7 +1041,7 @@ fun RichPresence(
                                 model = when (largeImageType) {
                                     "thumbnail" -> song?.song?.thumbnailUrl
                                     "artist" -> song?.artists?.firstOrNull()?.thumbnailUrl
-                                    "appicon" -> "https://raw.githubusercontent.com/nikhilvishwakarma00/Velune/main/fastlane/metadata/android/en-US/images/icon.png"
+                                    "appicon" -> "https://raw.githubusercontent.com/highrise14752-a11y/play/main/fastlane/metadata/android/en-US/images/icon.png"
                                     "custom" -> largeImageCustomUrl.ifBlank { song?.song?.thumbnailUrl }
                                     else -> song?.song?.thumbnailUrl
                                 },
@@ -1065,7 +1065,7 @@ fun RichPresence(
                             val smallModel = when (smallImageType.lowercase()) {
                                 "thumbnail" -> songThumb  // Only show song thumbnail, no fallback
                                 "artist" -> artistThumb   // Only show artist thumbnail, no fallback to song
-                                "appicon" -> "https://raw.githubusercontent.com/nikhilvishwakarma00/Velune/main/fastlane/metadata/android/en-US/images/icon.png"
+                                "appicon" -> "https://raw.githubusercontent.com/highrise14752-a11y/play/main/fastlane/metadata/android/en-US/images/icon.png"
                                 "custom" -> smallImageCustomUrl.takeIf { it.isNotBlank() } ?: songThumb  // Custom with fallback to song only
                                 "dontshow", "none" -> null
                                 else -> artistThumb  // Default to artist without fallback

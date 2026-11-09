@@ -382,7 +382,7 @@ class BackupRestoreViewModel @Inject constructor(
         val serializer = android.util.Xml.newSerializer()
         serializer.setOutput(outputStream, "UTF-8")
         serializer.startDocument("UTF-8", true)
-        serializer.startTag(null, "VeluneBackup")
+        serializer.startTag(null, "PlayBackup")
         serializer.startTag(null, "Settings")
 
         for ((key, value) in prefs) {
@@ -412,7 +412,7 @@ class BackupRestoreViewModel @Inject constructor(
         }
 
         serializer.endTag(null, "Settings")
-        serializer.endTag(null, "VeluneBackup")
+        serializer.endTag(null, "PlayBackup")
         serializer.endDocument()
         serializer.flush()
     }

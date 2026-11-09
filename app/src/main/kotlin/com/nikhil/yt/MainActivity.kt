@@ -492,7 +492,7 @@ class MainActivity : ComponentActivity() {
             // Update popup disabled - IzzyOnDroid handles updates
             // LaunchedEffect(latestVersionName) {
             //     val cleanLatest = latestVersionName
-            //         .removePrefix("Velune ")
+            //         .removePrefix("Play ")
             //         .removePrefix("v")
             //         .trim()
             //     if (cleanLatest.isNotEmpty() && cleanLatest != BuildConfig.VERSION_NAME) {
@@ -1139,8 +1139,8 @@ class MainActivity : ComponentActivity() {
                                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                                         // app icon
                                                         Image(
-                                                            painter = painterResource(id = R.drawable.ic_velune_concept),
-                                                            contentDescription = "Velune Logo",
+                                                            painter = painterResource(id = R.drawable.play_logo),
+                                                            contentDescription = "Play Logo",
                                                             modifier = Modifier
                                                                 .size(35.dp)
                                                                 .padding(end = 6.dp)

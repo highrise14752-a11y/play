@@ -36,11 +36,11 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:usesCleartextTraffic="true"
         android:supportsRtl="false"
-        android:theme="@style/Theme.VeluneApp"
+        android:theme="@style/Theme.PlayApp"
         tools:targetApi="tiramisu">
         <meta-data
             android:name="androidx.media3.session.default_notification_icon"
-            android:resource="@drawable/ic_velune_concept" />
+            android:resource="@drawable/ic_play_notification" />
 
         <uses-library
             android:name="org.apache.http.legacy"
@@ -50,7 +50,7 @@
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
-            android:theme="@style/Theme.VeluneApp"
+            android:theme="@style/Theme.PlayApp"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -192,7 +192,7 @@
             android:name=".DebugActivity"
             android:exported="true"
             android:process=":crash"
-            android:theme="@style/Theme.VeluneApp">
+            android:theme="@style/Theme.PlayApp">
         </activity>
         <receiver
             android:name=".ui.widget.VeluneWidgetReceiver"
@@ -209,7 +209,7 @@
         <activity
             android:name=".ui.screens.settings.PoTokenExtractionActivity"
             android:exported="false"
-            android:theme="@style/Theme.VeluneApp" />
+            android:theme="@style/Theme.PlayApp" />
     </application>
 
 </manifest>

@@ -118,14 +118,14 @@ class VeluneWidget : GlanceAppWidget() {
 
         val isPlaying = prefs[widgetIsPlayingKey] ?: false
         val currentSongTitle = prefs[widgetTitleKey] ?: "Not Playing"
-        val currentArtistName = prefs[widgetArtistKey] ?: "Velune"
+        val currentArtistName = prefs[widgetArtistKey] ?: "Play"
 
         val artPath = prefs[widgetArtPathKey]
         val artBitmap = artPath?.let { BitmapFactory.decodeFile(it) }
         val imageProvider = if (artBitmap != null) {
             ImageProvider(artBitmap)
         } else {
-            ImageProvider(R.drawable.ic_velune_concept)
+            ImageProvider(R.drawable.play_logo)
         }
 
         val defaultBg = android.graphics.Color.parseColor("#1E1E1E")

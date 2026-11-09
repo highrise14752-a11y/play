@@ -20,7 +20,7 @@ android {
     compileSdk = 36
 
     defaultConfig {
-    applicationId = "com.nikhil.yt"
+    applicationId = "com.highrise14752.play"
         minSdk = 26
         targetSdk = 36
         versionCode = 10

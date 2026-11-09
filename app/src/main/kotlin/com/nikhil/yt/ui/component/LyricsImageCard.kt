@@ -384,13 +384,9 @@ fun LyricsImageCard(
                             contentAlignment = Alignment.Center
                         ) {
                             Image(
-                                painter = painterResource(id = R.drawable.ic_velune_concept),
+                                painter = painterResource(id = R.drawable.play_logo),
                                 contentDescription = null,
                                 modifier = Modifier.size(15.dp),
-                                colorFilter = ColorFilter.tint(
-                                    if (glassStyle.isDark) Color.Black.copy(alpha = 0.85f)
-                                    else Color.White.copy(alpha = 0.9f)
-                                )
                             )
                         }
 

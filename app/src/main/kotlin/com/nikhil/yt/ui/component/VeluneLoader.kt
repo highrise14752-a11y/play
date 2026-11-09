@@ -11,26 +11,22 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.res.painterResource
+import com.nikhil.yt.R
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /**
- * Velune custom loading animation - animated V that pulses and rotates
+ * Play logo loading animation.
  */
 @Composable
 fun VeluneLoader(
@@ -38,8 +34,6 @@ fun VeluneLoader(
     size: Dp = 40.dp,
     color: Color? = null,
 ) {
-    val accentColor = color ?: MaterialTheme.colorScheme.primary
-
     val infiniteTransition = rememberInfiniteTransition(label = "velune_loader")
 
     // Pulsing scale animation
@@ -79,34 +73,15 @@ fun VeluneLoader(
         contentAlignment = Alignment.Center,
         modifier = modifier.size(size)
     ) {
-        Canvas(modifier = Modifier.size(size)) {
-            val w = this.size.width
-            val h = this.size.height
-            val strokeWidth = w * 0.12f * scale
-            val pad = w * 0.15f
-            val cx = w / 2f
-            val botY = h - pad
-
-            rotate(rotation, pivot = Offset(cx, h / 2f)) {
-                val path = Path().apply {
-                    // Left arm of V
-                    moveTo(pad, pad)
-                    lineTo(cx, botY * scale + h * (1 - scale) / 2f)
-                    // Right arm of V
-                    moveTo(w - pad, pad)
-                    lineTo(cx, botY * scale + h * (1 - scale) / 2f)
-                }
-
-                drawPath(
-                    path = path,
-                    color = accentColor.copy(alpha = alpha),
-                    style = Stroke(
-                        width = strokeWidth,
-                        cap = StrokeCap.Round,
-                        join = StrokeJoin.Round
-                    )
-                )
+        Image(
+            painter = painterResource(R.drawable.play_logo),
+            contentDescription = null,
+            modifier = Modifier.size(size).graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+                rotationZ = rotation
+                this.alpha = alpha
             }
-        }
+        )
     }
 }

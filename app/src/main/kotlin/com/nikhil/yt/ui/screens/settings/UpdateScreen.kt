@@ -101,7 +101,7 @@ fun UpdateScreen(
     val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
     val coroutineScope = rememberCoroutineScope()
-    val nightlyInstallUrl = "https://github.com/nikhilvishwakarma00/Velune/releases/latest"
+    val nightlyInstallUrl = "https://github.com/highrise14752-a11y/play/releases/latest"
 
     val (enableUpdateNotification, onEnableUpdateNotificationChange) = rememberPreference(
         EnableUpdateNotificationKey,
@@ -151,13 +151,13 @@ fun UpdateScreen(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        text = "⚠️ By using Velune's in-app updater, you are getting updates straight from the developer. These updates are not checked by whatever app store you might have installed Velune from.",
+                        text = "⚠️ By using Play's in-app updater, you are getting updates straight from the developer. These updates are not checked by whatever app store you might have installed Play from.",
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold
                     )
 
                     Text(
-                        text = "Velune provides two download channels for builds:",
+                        text = "Play provides two download channels for builds:",
                         style = MaterialTheme.typography.bodyMedium
                     )
 
@@ -236,13 +236,13 @@ fun UpdateScreen(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        text = "⚠️ By using Velune's in-app updater, you are getting updates straight from the developer. These updates are not checked by whatever app store you might have installed Velune from.",
+                        text = "⚠️ By using Play's in-app updater, you are getting updates straight from the developer. These updates are not checked by whatever app store you might have installed Play from.",
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold
                     )
 
                     Text(
-                        text = "Velune provides two download channels for builds:",
+                        text = "Play provides two download channels for builds:",
                         style = MaterialTheme.typography.bodyMedium
                     )
 

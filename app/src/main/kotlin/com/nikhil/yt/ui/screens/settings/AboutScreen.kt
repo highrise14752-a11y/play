@@ -95,7 +95,7 @@ fun AboutScreen(
                 ) {
                     // Title
                     Text(
-                        text = "VELUNE",
+                        text = "PLAY",
                         style = MaterialTheme.typography.displaySmall,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 2.sp,
@@ -140,7 +140,7 @@ fun AboutScreen(
                 AboutItemCard(
                     iconUrl = "https://github.com/nikhilvishwakarma00.png",
                     title = "Nikhil",
-                    subtitle = "App Developer",
+                    subtitle = "Original Velune developer",
                     onClick = { uriHandler.openUri("https://github.com/nikhilvishwakarma00") }
                 )
                 Spacer(Modifier.height(24.dp))
@@ -174,7 +174,7 @@ fun AboutScreen(
                     iconRes = R.drawable.github,
                     title = "GitHub Repository",
                     subtitle = "View source code",
-                    onClick = { uriHandler.openUri("https://github.com/nikhilvishwakarma00/Velune") }
+                    onClick = { uriHandler.openUri("https://github.com/highrise14752-a11y/play") }
                 )
                 Spacer(Modifier.height(24.dp))
 
@@ -312,7 +312,7 @@ fun AboutItemCard(
     }
 }
 fun launchUpiPayment(context: android.content.Context, upiId: String, payeeName: String) {
-    val note = "Support for Velune"
+    val note = "Support for Velune upstream development"
     val uriString = "upi://pay?pa=$upiId&pn=${android.net.Uri.encode(payeeName)}&tn=${android.net.Uri.encode(note)}&cu=INR"
     val uri = android.net.Uri.parse(uriString)
     val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, uri)
@@ -353,13 +353,13 @@ fun SupportDeveloperCard(modifier: Modifier = Modifier) {
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 Text(
-                    text = "Support the Developer",
+                    text = "Support the Original Developer",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = "If you enjoy Velune, consider buying me a chai!",
+                    text = "Support Nikhil, the developer of Velune, which Play is based on.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

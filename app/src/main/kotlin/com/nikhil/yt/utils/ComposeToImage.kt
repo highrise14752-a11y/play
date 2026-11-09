@@ -423,7 +423,6 @@ object ComposeToImage {
             padding = glassLeft + contentPadding,
             bottomPadding = glassBottom - contentPadding,
             circleColor = secondaryTxtColor,
-            logoTint = if (style.isDark) 0xDD000000.toInt() else 0xE6FFFFFF.toInt(),
             textColor = secondaryTxtColor,
         )
 
@@ -447,23 +446,12 @@ object ComposeToImage {
         padding: Float,
         bottomPadding: Float = canvasHeight - padding,
         circleColor: Int,
-        logoTint: Int,
         textColor: Int,
     ) {
         val baseSize = minOf(canvasWidth, canvasHeight).toFloat()
         val logoSize = (baseSize * 0.045f).toInt()
 
-        val rawLogo = context.getDrawable(R.drawable.ic_velune_concept)?.toBitmap(logoSize, logoSize)
-        val logo = rawLogo?.let { source ->
-            val colored = Bitmap.createBitmap(source.width, source.height, Bitmap.Config.ARGB_8888)
-            val canvasLogo = Canvas(colored)
-            val paint = Paint().apply {
-                colorFilter = PorterDuffColorFilter(logoTint, PorterDuff.Mode.SRC_IN)
-                isAntiAlias = true
-            }
-            canvasLogo.drawBitmap(source, 0f, 0f, paint)
-            colored
-        }
+        val logo = context.getDrawable(R.drawable.play_logo)?.toBitmap(logoSize, logoSize)
 
         val appName = context.getString(R.string.app_name)
         val appNamePaint = TextPaint().apply {
@@ -502,7 +490,7 @@ object ComposeToImage {
             val contentValues = ContentValues().apply {
                 put(MediaStore.MediaColumns.DISPLAY_NAME, "$fileName.png")
                 put(MediaStore.MediaColumns.MIME_TYPE, "image/png")
-                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/Velune")
+                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/Play")
             }
             val uri = context.contentResolver.insert(
                 MediaStore.Images.Media.EXTERNAL_CONTENT_URI,

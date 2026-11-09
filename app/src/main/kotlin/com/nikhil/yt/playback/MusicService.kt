@@ -477,7 +477,7 @@ class MusicService :
                     )
 
                 NotificationCompat.Builder(this, CHANNEL_ID)
-                    .setSmallIcon(R.drawable.ic_velune_concept)
+                    .setSmallIcon(R.drawable.ic_play_notification)
                     .setContentTitle(getString(R.string.music_player))
                     .setContentText(getString(R.string.app_name))
                     .setContentIntent(contentIntent)
@@ -582,7 +582,7 @@ class MusicService :
                 CHANNEL_ID,
                 R.string.music_player
             ).apply {
-                setSmallIcon(R.drawable.ic_velune_concept)
+                setSmallIcon(R.drawable.ic_play_notification)
             }
         )
         
@@ -2113,7 +2113,7 @@ class MusicService :
                 return@launch
             }
 
-            val togetherToken = "VeluneAdminToken"
+            val togetherToken = "PlayAdminToken"
             if (togetherToken == null) {
                 scope.launch(SilentHandler) {
                     togetherSessionState.value =
@@ -3771,7 +3771,7 @@ class MusicService :
             updateVeluneWidgetState(
                 context = this@MusicService,
                 title = currentMetadata?.title ?: "Not Playing",
-                artist = currentMetadata?.artists?.joinToString(", ") { it.name } ?: "Velune",
+                artist = currentMetadata?.artists?.joinToString(", ") { it.name } ?: "Play",
                 isPlaying = isPlaying,
                 thumbnailUrl = currentMetadata?.thumbnailUrl
             )
