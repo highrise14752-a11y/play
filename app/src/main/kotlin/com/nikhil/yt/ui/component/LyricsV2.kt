@@ -77,8 +77,6 @@ import com.nikhil.yt.constants.LyricsScrollKey
 import com.nikhil.yt.constants.LyricsTextPositionKey
 import com.nikhil.yt.constants.LyricsTextSizeKey
 import com.nikhil.yt.constants.LyricsLineSpacingKey
-import com.nikhil.yt.constants.LyricsRomanizeJapaneseKey
-import com.nikhil.yt.constants.LyricsRomanizeKoreanKey
 import com.nikhil.yt.constants.PlayerBackgroundStyle
 import com.nikhil.yt.constants.PlayerBackgroundStyleKey
 import com.nikhil.yt.constants.UseSystemFontKey
@@ -91,8 +89,6 @@ import com.nikhil.yt.lyrics.LyricsUtils.isKorean
 import com.nikhil.yt.lyrics.LyricsUtils.isTtml
 import com.nikhil.yt.lyrics.LyricsUtils.parseLyrics
 import com.nikhil.yt.lyrics.LyricsUtils.parseTtml
-import com.nikhil.yt.lyrics.LyricsUtils.romanizeJapanese
-import com.nikhil.yt.lyrics.LyricsUtils.romanizeKorean
 import com.nikhil.yt.lyrics.WordTimestamp
 import com.nikhil.yt.ui.component.shimmer.ShimmerHost
 import com.nikhil.yt.ui.component.shimmer.TextPlaceholder
@@ -148,8 +144,6 @@ fun LyricsV2(
     val (lyricsScroll) = rememberPreference(LyricsScrollKey, defaultValue = true)
     val (lyricsTextSize) = rememberPreference(LyricsTextSizeKey, defaultValue = 26f)
     val (lyricsLineSpacing) = rememberPreference(LyricsLineSpacingKey, defaultValue = 1.3f)
-    val (romanizeJapanese) = rememberPreference(LyricsRomanizeJapaneseKey, defaultValue = true)
-    val (romanizeKorean) = rememberPreference(LyricsRomanizeKoreanKey, defaultValue = true)
     val (useSystemFont) = rememberPreference(UseSystemFontKey, defaultValue = false)
     val lyricsFontFamily = remember(useSystemFont) {
         if (useSystemFont) null else FontFamily(Font(R.font.sfprodisplaybold))
@@ -275,21 +269,7 @@ fun LyricsV2(
         }
     }
 
-    // ── Romanization ──
-    LaunchedEffect(entriesWithWords, romanizeJapanese, romanizeKorean) {
-        if (!romanizeJapanese && !romanizeKorean) return@LaunchedEffect
-        entriesWithWords.forEach { entry ->
-            if (entry.text.isBlank() || entry.romanizedTextFlow.value != null) return@forEach
-            scope.launch(Dispatchers.Default) {
-                val romanized = when {
-                    romanizeJapanese && isJapanese(entry.text) -> romanizeJapanese(entry.text)
-                    romanizeKorean && isKorean(entry.text) -> romanizeKorean(entry.text)
-                    else -> null
-                }
-                if (romanized != null) entry.romanizedTextFlow.value = romanized
-            }
-        }
-    }
+
 
     // ── Playback position tracking ──
     val leadMs = if (isTtmlFormat) TTML_LEAD_MS else LRC_LEAD_MS
@@ -302,11 +282,11 @@ fun LyricsV2(
         while (isActive) {
             val sliderPos = sliderPositionProvider()
             val pos = sliderPos ?: player.currentPosition
-            
+
             // Add a visual tuning offset so animations feel instantly responsive and perfectly land on beat
-            val visualTuningOffsetMs = 150L 
+            val visualTuningOffsetMs = 150L
             currentPositionMs = pos + leadMs + visualTuningOffsetMs
-            
+
             currentLineIndex = findCurrentLineIndex(entriesWithWords, currentPositionMs, 0L)
             delay(16L) // ~60fps polling
         }
@@ -465,7 +445,6 @@ fun LyricsV2(
                 val wordLineAlpha = if (item.words != null && isSynced) 1f else lineAlpha
 
 
-
                 // Background vocal detection
                 val hasBackgroundWords = item.words?.any { it.isBackground } == true
                 val isAllBackground = item.words?.all { it.isBackground || it.text.isBlank() } == true
@@ -520,25 +499,7 @@ fun LyricsV2(
                         )
                     }
 
-                    // ── Romanization ──
-                    val romanizedText by item.romanizedTextFlow.collectAsState()
-                    if (romanizedText != null) {
-                        Text(
-                            text = romanizedText!!,
-                            style = MaterialTheme.typography.bodyMedium.copy(
-                                fontSize = (lyricsTextSize * 0.55f).sp,
-                                lineHeight = (lyricsTextSize * 0.75f).sp,
-                                fontWeight = FontWeight.Normal,
-                                fontStyle = if (isAllBackground) FontStyle.Italic else FontStyle.Normal,
-                                fontFamily = lyricsFontFamily ?: MaterialTheme.typography.bodyMedium.fontFamily,
-                            ),
-                            color = textColor.copy(alpha = if (isActive) 0.75f else inactiveAlpha * 0.7f),
-                            textAlign = textAlign,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = (lyricsTextSize * 0.3f).dp),
-                        )
-                    }
+
                 }
             }
 
@@ -647,7 +608,7 @@ private fun LyricsLineV2(
     if (bgWords.isNotEmpty()) {
         val spacerHeight = if (mainWords.isNotEmpty()) 4.dp else 0.dp
         if (mainWords.isNotEmpty()) Spacer(modifier = Modifier.height(spacerHeight))
-        
+
         FlowRow(
             modifier = Modifier.fillMaxWidth().alpha(0.85f), // Slightly dimmer overall
             horizontalArrangement = arrangement,
@@ -664,7 +625,7 @@ private fun LyricsLineV2(
                     )
                     return@forEachIndexed
                 }
-                
+
                 AnimatedWordV2(
                     word = word,
                     wordIndex = wordIndex + mainWords.size,
@@ -718,9 +679,9 @@ private fun AnimatedWordV2(
     // Subtle scale up peaking halfway through the word. Exact timing sync!
     val sinProgress = kotlin.math.sin(progress * kotlin.math.PI).toFloat()
     val wordScale = 1f + (0.015f * sinProgress)
-    
+
     // Float is only applied when the word is actively sung, making it pop from the line.
-    // We use animateFloatAsState so that when it finishes (and drops to 0f), 
+    // We use animateFloatAsState so that when it finishes (and drops to 0f),
     // it smoothly decays back into place rather than a harsh mathematical snap.
     val targetFloat = if (isWordActive) -4f * sinProgress else 0f
     val floatOffset by androidx.compose.animation.core.animateFloatAsState(
@@ -801,7 +762,7 @@ private fun AnimatedWordV2(
                             )
                         }
                 } else {
-                    Modifier 
+                    Modifier
                 }
             )
         }

@@ -5,7 +5,6 @@
  */
 
 
-
 package com.nikhil.yt.ui.player
 
 import androidx.compose.animation.AnimatedVisibility
@@ -284,13 +283,13 @@ fun Thumbnail(
     val cropThumbnailToSquare by rememberPreference(CropThumbnailToSquareKey, false)
     val canSkipPrevious by playerConnection.canSkipPrevious.collectAsState()
     val canSkipNext by playerConnection.canSkipNext.collectAsState()
-    
+
     // Player background style for consistent theming
     val playerBackground by rememberEnumPreference(
         key = PlayerBackgroundStyleKey,
         defaultValue = PlayerBackgroundStyle.DEFAULT
     )
-    
+
     val textBackgroundColor = when (playerBackground) {
         PlayerBackgroundStyle.DEFAULT -> MaterialTheme.colorScheme.onBackground
         PlayerBackgroundStyle.BLUR -> Color.White
@@ -305,10 +304,10 @@ fun Thumbnail(
     LaunchedEffect(maxCanvasCacheSize) {
         CanvasArtworkPlaybackCache.setMaxSize(maxCanvasCacheSize)
     }
-    
+
     // Grid state
     val thumbnailLazyGridState = rememberLazyGridState()
-    
+
     // Create a playlist using correct shuffle-aware logic
     val timeline = playerConnection.player.currentTimeline
     val currentIndex = playerConnection.player.currentMediaItemIndex
@@ -368,14 +367,10 @@ fun Thumbnail(
 
         if (currentItem > currentMediaIndex && canSkipNext) {
             playerConnection.player.seekToNext()
-            if (com.nikhil.yt.ui.screens.settings.DiscordPresenceManager.isRunning()) {
-                try { com.nikhil.yt.ui.screens.settings.DiscordPresenceManager.restart() } catch (_: Exception) {}
-            }
+
         } else if (currentItem < currentMediaIndex && canSkipPrevious) {
             playerConnection.player.seekToPreviousMediaItem()
-            if (com.nikhil.yt.ui.screens.settings.DiscordPresenceManager.isRunning()) {
-                try { com.nikhil.yt.ui.screens.settings.DiscordPresenceManager.restart() } catch (_: Exception) {}
-            }
+
         }
     }
 
@@ -457,7 +452,7 @@ fun Thumbnail(
                         )
                     }
                 }
-                
+
                 // Thumbnail content
                 BoxWithConstraints(
                     contentAlignment = Alignment.Center,
@@ -475,7 +470,7 @@ fun Thumbnail(
                     ) {
                         items(
                             items = mediaItems,
-                            key = { item -> 
+                            key = { item ->
                                 // Use mediaId with stable fallback to avoid recomposition issues
                                 item.mediaId.ifEmpty { "unknown_${item.hashCode()}" }
                             }
@@ -598,10 +593,7 @@ fun Thumbnail(
                                                     )
                                                     seekDirection = "+${skipAmount / 1000}s"
                                                 }
-                                                // If a user double-tap skip lands on a new media item, restart presence manager to pick up artwork quickly
-                                                if (com.nikhil.yt.ui.screens.settings.DiscordPresenceManager.isRunning()) {
-                                                    try { com.nikhil.yt.ui.screens.settings.DiscordPresenceManager.restart() } catch (_: Exception) {}
-                                                }
+
 
                                                 showSeekEffect = true
                                             }
@@ -632,7 +624,7 @@ fun Thumbnail(
                                     } else {
                                         val primaryCanvasUrl = canvasArtwork?.animated
                                         val fallbackCanvasUrl = canvasArtwork?.videoUrl
-                                        
+
                                         AsyncImage(
                                             model = item.mediaMetadata.artworkUri?.toString()?.toHighResThumbnail(),
                                             contentDescription = null,
@@ -807,7 +799,7 @@ private fun CanvasArtworkPlayer(
                         }
                     if (!next.isNullOrBlank()) {
                         currentUrl = next
-                        isVideoReady = false 
+                        isVideoReady = false
                     }
                 }
 

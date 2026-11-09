@@ -5,7 +5,6 @@
  */
 
 
-
 package com.nikhil.yt.ui.screens.settings
 
 import android.content.Intent
@@ -113,10 +112,6 @@ import kotlin.math.roundToInt
 fun DebugSettings(
     navController: NavController
 ) {
-    val (showDevDebug, onShowDevDebugChange) = rememberPreference(
-        key = booleanPreferencesKey("dev_show_discord_debug"),
-        defaultValue = false
-    )
 
     val (showNerdStats, onShowNerdStatsChange) = rememberPreference(
         key = booleanPreferencesKey("dev_show_nerd_stats"),
@@ -163,13 +158,6 @@ fun DebugSettings(
                 title = stringResource(R.string.experimental_features)
             )
 
-            SwitchPreference(
-                title = { Text(stringResource(R.string.show_discord_debug_ui)) },
-                description = stringResource(R.string.enable_discord_debug_lines),
-                icon = { Icon(painterResource(R.drawable.discord), null) },
-                checked = showDevDebug,
-                onCheckedChange = onShowDevDebugChange
-            )
 
             SwitchPreference(
                 title = { Text(stringResource(R.string.show_nerd_stats)) },
@@ -187,19 +175,6 @@ fun DebugSettings(
                 onCheckedChange = onShowCodecOnPlayerChange
             )
 
-            AnimatedVisibility(
-                visible = showDevDebug,
-                enter = expandVertically() + fadeIn(),
-                exit = shrinkVertically() + fadeOut()
-            ) {
-                Column(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    DiscordDebugSection()
-                }
-            }
 
             AnimatedVisibility(
                 visible = showNerdStats && playerConnection != null,
@@ -220,129 +195,6 @@ fun DebugSettings(
     }
 }
 
-@Composable
-private fun DiscordDebugSection() {
-    val lastStartTs: Long? by DiscordPresenceManager.lastRpcStartTimeFlow.collectAsState(initial = null)
-    val lastEndTs: Long? by DiscordPresenceManager.lastRpcEndTimeFlow.collectAsState(initial = null)
-    val lastStart: String = lastStartTs?.let { makeTimeString(it) } ?: "—"
-    val lastEnd: String = lastEndTs?.let { makeTimeString(it) } ?: "—"
-    val isRunning = DiscordPresenceManager.isRunning()
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Surface(
-                        shape = CircleShape,
-                        color = if (isRunning)
-                            MaterialTheme.colorScheme.primaryContainer
-                        else
-                            MaterialTheme.colorScheme.errorContainer,
-                        modifier = Modifier.size(48.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                painter = painterResource(R.drawable.discord),
-                                contentDescription = null,
-                                modifier = Modifier.size(24.dp),
-                                tint = if (isRunning)
-                                    MaterialTheme.colorScheme.onPrimaryContainer
-                                else
-                                    MaterialTheme.colorScheme.onErrorContainer
-                            )
-                        }
-                    }
-                    Column {
-                        Text(
-                            text = stringResource(R.string.discord_integration),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            text = if (isRunning)
-                                stringResource(R.string.presence_manager_running)
-                            else
-                                stringResource(R.string.presence_manager_stopped),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (isRunning)
-                                MaterialTheme.colorScheme.primary
-                            else
-                                MaterialTheme.colorScheme.error
-                        )
-                    }
-                }
-
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = if (isRunning)
-                        Color(0xFF43B581).copy(alpha = 0.2f)
-                    else
-                        MaterialTheme.colorScheme.error.copy(alpha = 0.2f)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(8.dp)
-                                .background(
-                                    color = if (isRunning) Color(0xFF43B581) else MaterialTheme.colorScheme.error,
-                                    shape = CircleShape
-                                )
-                        )
-                        Text(
-                            text = if (isRunning) stringResource(R.string.status_active) else stringResource(R.string.status_inactive),
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = if (isRunning) Color(0xFF43B581) else MaterialTheme.colorScheme.error
-                        )
-                    }
-                }
-            }
-
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                DebugTimestampItem(
-                    label = stringResource(R.string.last_start),
-                    value = lastStart,
-                    icon = R.drawable.play
-                )
-                DebugTimestampItem(
-                    label = stringResource(R.string.last_end),
-                    value = lastEnd,
-                    icon = R.drawable.pause
-                )
-            }
-        }
-    }
-
-    LogViewerPanel()
-}
 
 @Composable
 private fun DebugTimestampItem(
@@ -390,25 +242,12 @@ private fun LogViewerPanel() {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
 
-    var filterMode by remember { mutableStateOf(0) }
     var selectedLevels by remember {
         mutableStateOf(setOf(Log.INFO, Log.WARN, Log.ERROR))
     }
     var levelsMenuExpanded by remember { mutableStateOf(false) }
 
-    val filtered = remember(allLogs, filterMode, selectedLevels) {
-        allLogs.filter { entry ->
-            val tagMatch = when (filterMode) {
-                0 -> (entry.tag?.contains("DiscordRPC", true) == true) ||
-                        (entry.tag?.contains("DiscordPresenceManager", true) == true) ||
-                        entry.message.contains("DiscordPresenceManager") ||
-                        entry.message.contains("DiscordRPC")
-                else -> true
-            }
-            val levelMatch = selectedLevels.contains(entry.level)
-            tagMatch && levelMatch
-        }
-    }
+    val filtered = remember(allLogs, selectedLevels) { allLogs.filter { it.level in selectedLevels } }
 
     val listState = rememberLazyListState()
 
@@ -552,26 +391,6 @@ private fun LogViewerPanel() {
                 }
             }
 
-            SingleChoiceSegmentedButtonRow(
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                SegmentedButton(
-                    selected = filterMode == 0,
-                    onClick = { filterMode = 0 },
-                    shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
-                    icon = { }
-                ) {
-                    Text(stringResource(R.string.filter_discord_only))
-                }
-                SegmentedButton(
-                    selected = filterMode == 1,
-                    onClick = { filterMode = 1 },
-                    shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
-                    icon = { }
-                ) {
-                    Text(stringResource(R.string.filter_all_logs))
-                }
-            }
 
             Surface(
                 shape = RoundedCornerShape(16.dp),

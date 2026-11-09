@@ -5,7 +5,6 @@
  */
 
 
-
 package com.nikhil.yt
 
 import android.app.Application
@@ -35,7 +34,6 @@ import com.nikhil.yt.utils.reportException
 import com.nikhil.yt.innertube.YouTube
 import com.nikhil.yt.innertube.models.YouTubeLocale
 import com.nikhil.yt.kugou.KuGou
-import com.nikhil.yt.lastfm.LastFM
 import com.nikhil.yt.ui.player.CanvasArtworkPlaybackCache
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.DelicateCoroutinesApi
@@ -75,7 +73,7 @@ class App : Application(), SingletonImageLoader.Factory {
                 ?.processName
         }
     }
-    
+
     @OptIn(DelicateCoroutinesApi::class)
     override fun onCreate() {
         super.onCreate()
@@ -108,25 +106,21 @@ class App : Application(), SingletonImageLoader.Factory {
         if (languageTag == "zh-TW") {
             KuGou.useTraditionalChinese = true
         }
-        LastFM.initialize(
-            apiKey = BuildConfig.LASTFM_API_KEY,
-            secret = BuildConfig.LASTFM_SECRET
-        )
+
     }
 
     private fun initializeDeferredAsync() {
         applicationScope.launch(Dispatchers.IO) {
             try {
                 val prefs = dataStore.data.first()
-                
+
                 prefs[ContentCountryKey]?.takeIf { it != SYSTEM_DEFAULT }?.let { country ->
                     YouTube.locale = YouTube.locale.copy(gl = country)
                 }
                 prefs[ContentLanguageKey]?.takeIf { it != SYSTEM_DEFAULT }?.let { lang ->
                     YouTube.locale = YouTube.locale.copy(hl = lang)
                 }
-                
-                LastFM.sessionKey = prefs[LastFMSessionKey]
+
 
                 if (prefs[ProxyEnabledKey] == true) {
                     try {
@@ -146,7 +140,7 @@ class App : Application(), SingletonImageLoader.Factory {
                 if (prefs[UseLoginForBrowse] != false) {
                     YouTube.useLoginForBrowse = true
                 }
-                
+
                 // Apply random theme on startup if enabled
                 if (prefs[RandomThemeOnStartupKey] == true) {
                     val randomPalette = ThemePalettes.generateRandomPalette()
@@ -161,7 +155,7 @@ class App : Application(), SingletonImageLoader.Factory {
                         settings[CustomThemeColorKey] = encodedPalette
                     }
                 }
-                
+
                 isInitialized = true
             } catch (e: Exception) {
                 Timber.e(e, "Error during deferred initialization")
@@ -259,14 +253,7 @@ class App : Application(), SingletonImageLoader.Factory {
                     YouTube.poTokenPlayer = token?.takeIf { it.isNotBlank() }
                 }
         }
-        applicationScope.launch(Dispatchers.IO) {
-            dataStore.data
-                .map { it[LastFMSessionKey] }
-                .distinctUntilChanged()
-                .collect { sessionKey ->
-                    LastFM.sessionKey = sessionKey
-                }
-        }
+
     }
 
     override fun newImageLoader(context: PlatformContext): ImageLoader {

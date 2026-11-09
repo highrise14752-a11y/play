@@ -163,21 +163,6 @@ fun VeluneSettingsScreen(
                 )
             }
 
-            item {
-                SettingsItemScreenshotStyle(
-                    icon = painterResource(R.drawable.discord),
-                    title = "Discord",
-                    onClick = { navController.navigate("settings/discord") }
-                )
-            }
-
-            item {
-                SettingsItemScreenshotStyle(
-                    icon = painterResource(R.drawable.integration),
-                    title = "Integration",
-                    onClick = { navController.navigate("settings/integration") }
-                )
-            }
 
             item {
                 SettingsItemScreenshotStyle(

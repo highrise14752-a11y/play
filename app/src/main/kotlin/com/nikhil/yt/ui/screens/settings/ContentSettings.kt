@@ -5,7 +5,6 @@
  */
 
 
-
 package com.nikhil.yt.ui.screens.settings
 
 import android.annotation.TargetApi
@@ -80,8 +79,6 @@ fun ContentSettings(
             key = PreferredLyricsProviderKey,
             defaultValue = PreferredLyricsProvider.LRCLIB,
         )
-    val (lyricsRomanizeJapanese, onLyricsRomanizeJapaneseChange) = rememberPreference(LyricsRomanizeJapaneseKey, defaultValue = true)
-    val (lyricsRomanizeKorean, onLyricsRomanizeKoreanChange) = rememberPreference(LyricsRomanizeKoreanKey, defaultValue = true)
     val (preloadQueueLyricsEnabled, onPreloadQueueLyricsEnabledChange) = rememberPreference(PreloadQueueLyricsEnabledKey, defaultValue = true)
     val (queueLyricsPreloadCount, onQueueLyricsPreloadCountChange) = rememberPreference(QueueLyricsPreloadCountKey, defaultValue = 1)
     val (lengthTop, onLengthTopChange) = rememberPreference(key = TopSize, defaultValue = "50")
@@ -104,14 +101,14 @@ fun ContentSettings(
             onValueSelected = { newValue ->
                 val locale = Locale.getDefault()
                 val languageTag = locale.toLanguageTag().replace("-Hant", "")
- 
+
                 YouTube.locale = YouTube.locale.copy(
                     hl = newValue.takeIf { it != SYSTEM_DEFAULT }
                         ?: locale.language.takeIf { it in LanguageCodeToName }
                         ?: languageTag.takeIf { it in LanguageCodeToName }
                         ?: "en"
                 )
- 
+
                 onContentLanguageChange(newValue)
             }
         )
@@ -125,13 +122,13 @@ fun ContentSettings(
             },
             onValueSelected = { newValue ->
                 val locale = Locale.getDefault()
- 
+
                 YouTube.locale = YouTube.locale.copy(
                     gl = newValue.takeIf { it != SYSTEM_DEFAULT }
                         ?: locale.country.takeIf { it in CountryCodeToName }
                         ?: "US"
                 )
- 
+
                 onContentCountryChange(newValue)
            }
         )
@@ -267,19 +264,8 @@ fun ContentSettings(
             },
             onValueSelected = onPreferredProviderChange,
         )
-        SwitchPreference(
-            title = { Text(stringResource(R.string.lyrics_romanize_japanese)) },
-            icon = { Icon(painterResource(R.drawable.lyrics), null) },
-            checked = lyricsRomanizeJapanese,
-            onCheckedChange = onLyricsRomanizeJapaneseChange,
-        )
 
-        SwitchPreference(
-            title = { Text(stringResource(R.string.lyrics_romanize_korean)) },
-            icon = { Icon(painterResource(R.drawable.lyrics), null) },
-            checked = lyricsRomanizeKorean,
-            onCheckedChange = onLyricsRomanizeKoreanChange,
-        )
+
         // Queue lyrics pre-load settings
         SwitchPreference(
             title = { Text(stringResource(R.string.preload_queue_lyrics)) },

@@ -91,8 +91,6 @@
 -dontwarn java.beans.PropertyDescriptor
 -dontwarn java.lang.management.**
 
-# Keep all classes within the kuromoji package
--keep class com.atilika.kuromoji.** { *; }
 
 ## Queue Persistence Rules
 # Keep queue-related classes to prevent serialization issues in release builds

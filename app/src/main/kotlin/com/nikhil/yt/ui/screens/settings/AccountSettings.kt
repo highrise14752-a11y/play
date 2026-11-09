@@ -5,7 +5,6 @@
  */
 
 
-
 package com.nikhil.yt.ui.screens.settings
 
 import androidx.compose.animation.AnimatedContent
@@ -228,7 +227,7 @@ fun AccountSettings(
             }
 
             // Sync & Integration Section
-            SettingsSection(title = stringResource(R.string.integration)) {
+            SettingsSection(title = stringResource(R.string.general)) {
                 SettingsClickableItem(
                     icon = painterResource(R.drawable.playlist_add),
                     title = stringResource(R.string.select_playlist_to_sync),
@@ -240,15 +239,6 @@ fun AccountSettings(
                     color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
                 )
 
-                SettingsClickableItem(
-                    icon = painterResource(R.drawable.integration),
-                    title = stringResource(R.string.integration),
-                    subtitle = "Discord, Last.fm, ListenBrainz",
-                    onClick = {
-                        onClose()
-                        navController.navigate("settings/integration")
-                    }
-                )
 
                 HorizontalDivider(
                     modifier = Modifier.padding(start = 56.dp),

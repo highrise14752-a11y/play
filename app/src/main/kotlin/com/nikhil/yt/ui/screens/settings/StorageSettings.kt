@@ -27,6 +27,7 @@ import coil3.annotation.ExperimentalCoilApi
 import coil3.imageLoader
 import com.nikhil.yt.LocalPlayerAwareWindowInsets
 import com.nikhil.yt.LocalPlayerConnection
+import com.nikhil.yt.LocalDownloadUtil
 import com.nikhil.yt.R
 import com.nikhil.yt.constants.MaxCanvasCacheSizeKey
 import com.nikhil.yt.constants.MaxImageCacheSizeKey
@@ -56,7 +57,8 @@ fun StorageSettings(
     val imageDiskCache = context.imageLoader.diskCache ?: return
     val playerCache = LocalPlayerConnection.current?.service?.playerCache ?: return
     val downloadCache = LocalPlayerConnection.current?.service?.downloadCache ?: return
-    
+    val downloadUtil = LocalDownloadUtil.current
+
     val downloadCacheDir = remember { context.filesDir.resolve("download") }
     val playerCacheDir = remember { context.filesDir.resolve("exoplayer") }
 
@@ -90,7 +92,7 @@ fun StorageSettings(
     var playerCacheSize by remember { mutableStateOf(0L) }
     var downloadCacheSize by remember { mutableStateOf(0L) }
     var canvasCacheSize by remember { mutableStateOf(CanvasArtworkPlaybackCache.size()) }
-    
+
     val imageCacheProgress by animateFloatAsState(
         targetValue = if (imageDiskCache.maxSize > 0) {
             (imageCacheSize.toFloat() / imageDiskCache.maxSize).coerceIn(0f, 1f)
@@ -162,7 +164,8 @@ fun StorageSettings(
             downloadCacheSize =
                 withContext(Dispatchers.IO) {
                     val cacheSpace = tryOrNull { downloadCache.cacheSpace } ?: 0L
-                    if (cacheSpace == 0L) downloadCacheDir.directorySizeBytes() else cacheSpace
+                    (if (cacheSpace == 0L) downloadCacheDir.directorySizeBytes() else cacheSpace) +
+                        downloadUtil.storage.storedBytes()
                 }
         }
     }
@@ -240,6 +243,8 @@ fun StorageSettings(
                     clearActionText = stringResource(R.string.clear_all_downloads),
                     onClearClick = { clearDownloads = true }
                 )
+                Spacer(Modifier.height(16.dp))
+                DownloadLocationSettings(downloadUtil)
             }
 
             item {
@@ -253,7 +258,7 @@ fun StorageSettings(
                     -1 -> stringResource(R.string.unlimited)
                     else -> formatFileSize(maxSongCacheSize * 1024 * 1024L)
                 }
-                
+
                 NewCacheCard(
                     icon = R.drawable.ic_music,
                     title = stringResource(R.string.song_cache),
@@ -277,7 +282,7 @@ fun StorageSettings(
                     0 -> stringResource(R.string.disable)
                     else -> formatFileSize(maxImageCacheSize * 1024 * 1024L)
                 }
-                
+
                 NewCacheCard(
                     icon = R.drawable.image,
                     title = stringResource(R.string.image_cache),
@@ -305,7 +310,7 @@ fun StorageSettings(
                     0 -> stringResource(R.string.disable)
                     else -> stringResource(R.string.canvas_cache_items, maxCanvasCacheSize)
                 }
-                
+
                 NewCacheCard(
                     icon = R.drawable.motion_photos_on,
                     title = stringResource(R.string.canvas_cache),
@@ -325,15 +330,12 @@ fun StorageSettings(
                 title = stringResource(R.string.clear_all_downloads),
                 onDismiss = { clearDownloads = false },
                 onConfirm = {
-                    coroutineScope.launch(Dispatchers.IO) {
-                        downloadCache.keys.forEach { key ->
-                            downloadCache.removeResource(key)
-                        }
-                    }
+                    downloadUtil.clearAllDownloads()
                     clearDownloads = false
                 },
                 onCancel = { clearDownloads = false },
-                content = { Text(text = stringResource(R.string.clear_downloads_dialog)) }
+                content = { Text(text = stringResource(R.string.clear_downloads_dialog) + "\n\n" +
+                    stringResource(R.string.download_clear_files_notice)) }
             )
         }
 
@@ -382,14 +384,14 @@ fun StorageSettings(
                 content = { Text(text = stringResource(R.string.clear_canvas_cache_dialog)) }
             )
         }
-        
+
         // Settings Dialogs (since we removed ListPreference components, we re-implement the dialogs here)
         if (showSongCacheSizeDialog) {
             MaxCacheSizeDialog(
                 title = stringResource(R.string.max_cache_size),
                 selectedValue = maxSongCacheSize,
                 values = listOf(0, 128, 256, 512, 1024, 2048, 4096, 8192, -1),
-                valueToText = { 
+                valueToText = {
                     when (it) {
                         0 -> stringResource(R.string.disable)
                         -1 -> stringResource(R.string.unlimited)
@@ -397,47 +399,47 @@ fun StorageSettings(
                     }
                 },
                 onDismiss = { showSongCacheSizeDialog = false },
-                onSelect = { 
+                onSelect = {
                     onMaxSongCacheSizeChange(it)
-                    showSongCacheSizeDialog = false 
+                    showSongCacheSizeDialog = false
                 }
             )
         }
-        
+
         if (showImageCacheSizeDialog) {
             MaxCacheSizeDialog(
                 title = stringResource(R.string.max_cache_size),
                 selectedValue = maxImageCacheSize,
                 values = listOf(0, 128, 256, 512, 1024, 2048, 4096, 8192),
-                valueToText = { 
+                valueToText = {
                     when (it) {
                         0 -> stringResource(R.string.disable)
                         else -> formatFileSize(it * 1024 * 1024L)
                     }
                 },
                 onDismiss = { showImageCacheSizeDialog = false },
-                onSelect = { 
+                onSelect = {
                     onMaxImageCacheSizeChange(it)
-                    showImageCacheSizeDialog = false 
+                    showImageCacheSizeDialog = false
                 }
             )
         }
-        
+
         if (showCanvasCacheSizeDialog) {
             MaxCacheSizeDialog(
                 title = stringResource(R.string.max_cache_size),
                 selectedValue = maxCanvasCacheSize,
                 values = listOf(0, 64, 128, 256, 512, 1024),
-                valueToText = { 
+                valueToText = {
                     when (it) {
                         0 -> stringResource(R.string.disable)
                         else -> stringResource(R.string.canvas_cache_items, it)
                     }
                 },
                 onDismiss = { showCanvasCacheSizeDialog = false },
-                onSelect = { 
+                onSelect = {
                     onMaxCanvasCacheSizeChange(it)
-                    showCanvasCacheSizeDialog = false 
+                    showCanvasCacheSizeDialog = false
                 }
             )
         }

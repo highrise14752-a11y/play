@@ -1,0 +1,20 @@
+<resources>
+    <string name="download_location">Download location</string>
+    <string name="download_private_phone">Phone memory (private)</string>
+    <string name="download_sd_card">SD card</string>
+    <string name="download_private_volume">%1$s (private)</string>
+    <string name="download_public_folder">Folder: %1$s</string>
+    <string name="download_change_location">Change location</string>
+    <string name="download_choose_folder">Choose a normal folder</string>
+    <string name="download_location_description">Private downloads stay managed by Play. Choose a normal folder to save audio files that appear in your file manager. Private files are removed when Play is uninstalled; files in a chosen folder remain.</string>
+    <string name="download_location_new_only">New downloads are saved here after finishing and need temporary phone space. Existing songs stay where they are until you move them.</string>
+    <string name="download_move_existing">Move existing downloads</string>
+    <string name="download_move_confirm">Move completed downloads to %1$s? Originals are removed only after each new copy is saved successfully.</string>
+    <string name="download_saving_files">Saving downloaded songs…</string>
+    <string name="download_location_failed">Some file operations could not finish. Your songs have been kept. Check storage access and available space, then try Move existing downloads again.</string>
+    <string name="download_choose_failed">Could not use this location. Choose a writable folder or check that your SD card is available.</string>
+    <string name="download_delete_failed">Some saved files could not be deleted. Check that their storage is available and that Play still has access.</string>
+    <string name="download_no_sd_card">No writable SD card detected. Insert a card to use private SD-card storage, or choose a normal folder.</string>
+    <string name="download_clear_files_notice">This also deletes audio files saved by Play in your chosen folder. Other files are left alone.</string>
+    <string name="download_saved_file_unavailable">A saved song is unavailable. Reconnect its storage or restore folder access. Play will try streaming when an internet connection is available.</string>
+</resources>

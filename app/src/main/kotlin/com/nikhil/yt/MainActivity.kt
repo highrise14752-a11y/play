@@ -5,7 +5,6 @@
  */
 
 
-
 package com.nikhil.yt
 
 import com.nikhil.yt.ui.component.FluidSlidingNavigationBar
@@ -205,7 +204,6 @@ import com.nikhil.yt.ui.screens.navigationBuilder
 import com.nikhil.yt.ui.screens.search.LocalSearchScreen
 import com.nikhil.yt.ui.screens.search.OnlineSearchScreen
 import com.nikhil.yt.ui.screens.settings.DarkMode
-import com.nikhil.yt.ui.screens.settings.DiscordPresenceManager
 import com.nikhil.yt.ui.screens.settings.NavigationTab
 import com.nikhil.yt.ui.theme.VeluneTheme
 import com.nikhil.yt.ui.theme.ColorSaver
@@ -376,7 +374,6 @@ class MainActivity : ComponentActivity() {
         // Only clear/stop presence when the activity is actually finishing (not on rotation)
         // and do not clear it for transient configuration changes.
         if (isFinishing && !isChangingConfigurations) {
-            try { DiscordPresenceManager.stop() } catch (_: Exception) {}
         }
 
         val shouldStopOnTaskClear =

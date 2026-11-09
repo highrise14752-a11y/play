@@ -5,7 +5,6 @@
  */
 
 
-
 package com.nikhil.yt.ui.player
 
 import com.nikhil.yt.ui.component.VeluneLoader
@@ -258,14 +257,10 @@ private fun LegacyMiniPlayer(
 
                                     if (isRightSwipe && canSkipPrevious) {
                                         playerConnection.player.seekToPreviousMediaItem()
-                                        if (com.nikhil.yt.ui.screens.settings.DiscordPresenceManager.isRunning()) {
-                                            try { com.nikhil.yt.ui.screens.settings.DiscordPresenceManager.restart() } catch (_: Exception) {}
-                                        }
+
                                     } else if (!isRightSwipe && canSkipNext) {
                                         playerConnection.player.seekToNext()
-                                        if (com.nikhil.yt.ui.screens.settings.DiscordPresenceManager.isRunning()) {
-                                            try { com.nikhil.yt.ui.screens.settings.DiscordPresenceManager.restart() } catch (_: Exception) {}
-                                        }
+
                                     }
                                 }
 

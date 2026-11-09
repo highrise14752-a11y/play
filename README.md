@@ -13,7 +13,15 @@ Play is a rebranded fork of [Velune](https://github.com/nikhilvishwakarma00/Velu
 - Background playback, offline caching, and library management
 - Synced lyrics, translation, and animated artwork
 - Material You themes and audio controls
-- Discord Rich Presence and listening statistics
+- Listening statistics and Music Together shared listening
+
+## Download location
+
+Open **Settings → Storage → Downloaded songs → Change location** to choose private phone storage, private SD-card storage (when a writable removable card is available), or a normal folder through Android's folder picker. New downloads use the selected location. Use **Move existing downloads** to move completed songs; original data is kept until each copy is saved. Normal-folder audio files retain their original audio format and can be opened in other players. Downloads briefly use phone storage while downloading before being saved to the chosen location. Keep enough temporary phone space for active downloads.
+
+If a card or folder is unavailable, Play keeps the download in its previous location and shows an error in Storage settings. Restore access and use **Move existing downloads** to retry. Removing a download also removes the file Play saved; clearing all downloads never deletes unrelated folder contents.
+
+This edition removes Discord, Last.fm/ListenBrainz integrations, Japanese/Korean lyric romanization, and the developer/donation/inspiration/community Discord cards. Original-language lyrics, lyric translation, and Music Together remain available.
 
 ## Build
 

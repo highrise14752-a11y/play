@@ -41,6 +41,7 @@ import com.nikhil.yt.utils.dataStore
 import com.nikhil.yt.utils.get
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
 import okhttp3.OkHttpClient
 import java.time.LocalDateTime
@@ -51,12 +52,16 @@ import java.util.concurrent.atomic.AtomicInteger
 class DownloadUtil
 @Inject
 constructor(
-    @ApplicationContext context: Context,
+    @ApplicationContext private val context: Context,
     val database: MusicDatabase,
     val databaseProvider: DatabaseProvider,
     @DownloadCache val downloadCache: Cache,
     @PlayerCache val playerCache: Cache,
+    val storage: DownloadStorage,
 ) {
+    private val storageScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val storageActions = Channel<suspend () -> Unit>(Channel.UNLIMITED)
+    private val removedDownloads = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private val connectivityManager = context.getSystemService<ConnectivityManager>()!!
     private val audioQuality by enumPreference(context, AudioQualityKey, AudioQuality.AUTO)
     private val preferredStreamClient by enumPreference(context, PlayerStreamClientKey, PlayerStreamClient.ANDROID_VR)
@@ -218,27 +223,86 @@ constructor(
                             registerThrottleSignal(finalException)
                         } else if (download.state == Download.STATE_COMPLETED) {
                             clearThrottleSignal()
+                            storageActions.trySend { storage.finishPending(download) }
+                        }
+                        if (download.state != Download.STATE_COMPLETED &&
+                            download.state != Download.STATE_REMOVING) {
+                            val target = storage.location.value.id
+                            storage.captureLocation(download, target)
                         }
 
+                        if (download.state == Download.STATE_REMOVING) {
+                            removedDownloads.add(download.request.id)
+                            storage.markForRemoval(listOf(download.request.id))
+                        } else {
+                            removedDownloads.remove(download.request.id)
+                        }
                         downloads.update { map ->
                             map.toMutableMap().apply {
                                 set(download.request.id, download)
                             }
                         }
                     }
+
+                    override fun onDownloadRemoved(downloadManager: DownloadManager, download: Download) {
+                        removedDownloads.add(download.request.id)
+                        storage.markForRemoval(listOf(download.request.id))
+                        downloads.update { it - download.request.id }
+                        storageActions.trySend { storage.remove(download.request.id, download) }
+                    }
                 }
             )
         }
 
     init {
-        CoroutineScope(Dispatchers.IO).launch {
+        storageScope.launch {
+            storage.recoverInterruptedTransfers()
+            val pending = storage.pendingRemovalIds()
+            withContext(Dispatchers.Main) { pending.forEach { downloadManager.removeDownload(it) } }
+            storageActions.trySend { storage.retryPendingRemovals() }
+            for (action in storageActions) {
+                try { action() } catch (failure: Exception) {
+                    if (failure is CancellationException) throw failure
+                    storage.error.value = context.getString(com.nikhil.yt.R.string.download_location_failed)
+                }
+            }
+        }
+        storageScope.launch {
             val result = mutableMapOf<String, Download>()
             val cursor = downloadManager.downloadIndex.getDownloads()
-            while (cursor.moveToNext()) {
-                result[cursor.download.request.id] = cursor.download
+            cursor.use {
+                while (it.moveToNext()) {
+                    result[it.download.request.id] = it.download
+                }
             }
-            downloads.value = result
+            downloads.update { result.filterKeys { it !in removedDownloads } + it }
+            result.values.forEach { download ->
+                if (download.request.id !in removedDownloads && download.request.id !in storage.pendingRemovalIds()) {
+                    if (download.state == Download.STATE_COMPLETED) storageActions.trySend { storage.finishPending(download) }
+                    else if (download.state != Download.STATE_REMOVING) {
+                        val target = storage.location.value.id
+                        storage.captureLocation(download, target)
+                    }
+                }
+            }
         }
+    }
+
+    fun moveDownloadsToSelectedLocation() {
+        if (storage.busy.value) return
+        val target = storage.location.value.id
+        val snapshot = downloads.value.values.toList()
+        storage.busy.value = true
+        storageActions.trySend { storage.moveExisting(snapshot, target) }
+    }
+
+    fun clearAllDownloads() {
+        storage.error.value = null
+        storage.markForRemoval(storage.files.value.keys + downloads.value.keys)
+        storageActions.trySend { storage.retryPendingRemovals() }
+        androidx.media3.exoplayer.offline.DownloadService.sendRemoveAllDownloads(
+            context, ExoDownloadService::class.java, false,
+        )
     }
 
     fun getDownload(songId: String): Flow<Download?> = downloads.map { it[songId] }

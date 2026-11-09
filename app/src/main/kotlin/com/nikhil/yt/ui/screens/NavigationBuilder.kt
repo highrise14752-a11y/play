@@ -5,7 +5,6 @@
  */
 
 
-
 package com.nikhil.yt.ui.screens
 
 import androidx.compose.animation.core.tween
@@ -72,11 +71,7 @@ import com.nikhil.yt.ui.screens.settings.VeluneAccountSettingsScreen
 import com.nikhil.yt.ui.screens.settings.ChangelogScreen
 import com.nikhil.yt.ui.screens.settings.ContentSettings
 import com.nikhil.yt.ui.screens.settings.DarkMode
-import com.nikhil.yt.ui.screens.settings.DiscordLoginScreen
-import com.nikhil.yt.ui.screens.settings.DiscordSettings
 import com.nikhil.yt.ui.screens.settings.DebugSettings
-import com.nikhil.yt.ui.screens.settings.IntegrationScreen
-import com.nikhil.yt.ui.screens.settings.LastFMSettings
 import com.nikhil.yt.ui.screens.settings.MusicTogetherScreen
 import com.nikhil.yt.ui.screens.settings.PalettePickerScreen
 import com.nikhil.yt.ui.screens.settings.PlayerSettings
@@ -329,21 +324,13 @@ fun NavGraphBuilder.navigationBuilder(
     composable("settings/backup_restore") {
         BackupAndRestore(navController, scrollBehavior)
     }
-    composable("settings/discord") {
-        DiscordSettings(navController, scrollBehavior)
-    }
-    composable("settings/integration") {
-        IntegrationScreen(navController, scrollBehavior)
-    }
+
+
     composable("settings/music_together") {
         MusicTogetherScreen(navController, scrollBehavior)
     }
-    composable("settings/lastfm") {
-        LastFMSettings(navController, scrollBehavior)
-    }
-    composable("settings/discord/experimental") {
-        com.nikhil.yt.ui.screens.settings.DiscordExperimental(navController)
-    }
+
+
     composable("settings/misc") {
         DebugSettings(navController)
     }
@@ -351,9 +338,7 @@ fun NavGraphBuilder.navigationBuilder(
     composable("settings/changelog") {
         ChangelogScreen(navController, scrollBehavior)
     }
-    composable("settings/discord/login") {
-        DiscordLoginScreen(navController)
-    }
+
     composable("settings/about") {
         AboutScreen(navController, scrollBehavior)
     }

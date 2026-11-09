@@ -5,7 +5,6 @@
  */
 
 
-
 @file:Suppress("DEPRECATION")
 
 package com.nikhil.yt.playback
@@ -93,9 +92,6 @@ import com.nikhil.yt.constants.AutoDownloadOnLikeKey
 import com.nikhil.yt.constants.AutoLoadMoreKey
 import com.nikhil.yt.constants.AutoSkipNextOnErrorKey
 import com.nikhil.yt.constants.AutoStartOnBluetoothKey
-import com.nikhil.yt.constants.DiscordTokenKey
-import com.nikhil.yt.constants.EnableDiscordRPCKey
-import com.nikhil.yt.constants.EnableLastFMScrobblingKey
 import com.nikhil.yt.constants.EqualizerBandLevelsMbKey
 import com.nikhil.yt.constants.EqualizerBassBoostEnabledKey
 import com.nikhil.yt.constants.EqualizerBassBoostStrengthKey
@@ -109,9 +105,6 @@ import com.nikhil.yt.constants.HideExplicitKey
 import com.nikhil.yt.constants.HideVideoKey
 import com.nikhil.yt.constants.HistoryDuration
 import com.nikhil.yt.constants.InnerTubeCookieKey
-import com.nikhil.yt.constants.LastFMUseNowPlaying
-import com.nikhil.yt.constants.ListenBrainzEnabledKey
-import com.nikhil.yt.constants.ListenBrainzTokenKey
 import com.nikhil.yt.constants.MaxSongCacheSizeKey
 import com.nikhil.yt.constants.MediaSessionConstants.CommandToggleLike
 import com.nikhil.yt.constants.MediaSessionConstants.CommandToggleRepeatMode
@@ -125,9 +118,6 @@ import com.nikhil.yt.constants.PlayerStreamClient
 import com.nikhil.yt.constants.PlayerStreamClientKey
 import com.nikhil.yt.constants.PlayerVolumeKey
 import com.nikhil.yt.constants.RepeatModeKey
-import com.nikhil.yt.constants.ScrobbleDelayPercentKey
-import com.nikhil.yt.constants.ScrobbleDelaySecondsKey
-import com.nikhil.yt.constants.ScrobbleMinSongDurationKey
 import com.nikhil.yt.constants.ShowLyricsKey
 import com.nikhil.yt.constants.SkipSilenceKey
 import com.nikhil.yt.constants.SmartTrimmerKey
@@ -160,7 +150,6 @@ import com.nikhil.yt.extensions.toQueue
 import com.nikhil.yt.innertube.YouTube
 import com.nikhil.yt.innertube.models.SongItem
 import com.nikhil.yt.innertube.models.WatchEndpoint
-import com.nikhil.yt.lastfm.LastFM
 import com.nikhil.yt.lyrics.LyricsHelper
 import com.nikhil.yt.lyrics.LyricsPreloadManager
 import com.nikhil.yt.models.PersistPlayerState
@@ -171,10 +160,7 @@ import com.nikhil.yt.playback.queues.Queue
 import com.nikhil.yt.playback.queues.YouTubeQueue
 import com.nikhil.yt.playback.queues.filterExplicit
 import com.nikhil.yt.playback.queues.filterVideo
-import com.nikhil.yt.ui.screens.settings.DiscordPresenceManager
-import com.nikhil.yt.ui.screens.settings.ListenBrainzManager
 import com.nikhil.yt.utils.CoilBitmapLoader
-import com.nikhil.yt.utils.DiscordRPC
 import com.nikhil.yt.utils.NetworkConnectivityObserver
 import com.nikhil.yt.utils.StreamClientUtils
 import com.nikhil.yt.utils.SyncUtils
@@ -183,7 +169,6 @@ import com.nikhil.yt.utils.dataStore
 import com.nikhil.yt.utils.enumPreference
 import com.nikhil.yt.utils.get
 import com.nikhil.yt.utils.getAsync
-import com.nikhil.yt.utils.getPresenceIntervalMillis
 import com.nikhil.yt.utils.reportException
 import com.nikhil.yt.ui.widget.updateVeluneWidgetState
 import dagger.hilt.android.AndroidEntryPoint
@@ -318,9 +303,6 @@ class MusicService :
     private val persistentStateLock = Any()
     @Volatile
     private var suppressAutoPlayback = false
-    private var lastPresenceToken: String? = null
-    @Volatile
-    private var lastPresenceUpdateTime = 0L
 
     val currentMediaMetadata = MutableStateFlow<com.nikhil.yt.models.MediaMetadata?>(null)
     val queueRestoreCompleted = MutableStateFlow(false)
@@ -354,6 +336,9 @@ class MusicService :
     @DownloadCache
     lateinit var downloadCache: Cache
 
+    @Inject
+    lateinit var downloadStorage: DownloadStorage
+
     lateinit var player: ExoPlayer
     private lateinit var mediaSession: MediaLibrarySession
 
@@ -380,10 +365,6 @@ class MusicService :
     private var virtualizer: Virtualizer? = null
     private var loudnessEnhancer: LoudnessEnhancer? = null
 
-    private var discordRpc: DiscordRPC? = null
-    private var lastDiscordUpdateTime = 0L
-
-    private var scrobbleManager: com.nikhil.yt.utils.ScrobbleManager? = null
 
     val automixItems = MutableStateFlow<List<MediaItem>>(emptyList())
     val automixLoading = MutableStateFlow(false)
@@ -528,7 +509,7 @@ class MusicService :
 
         ensureStartedAsForeground()
 
-        
+
         player =
             ExoPlayer
                 .Builder(this)
@@ -585,7 +566,7 @@ class MusicService :
                 setSmallIcon(R.drawable.ic_play_notification)
             }
         )
-        
+
         updateNotification()
         player.repeatMode = REPEAT_MODE_OFF
 
@@ -635,11 +616,7 @@ class MusicService :
 
         currentSong.debounce(300).collect(scope) { song ->
             updateNotification()
-            if (song != null && player.playWhenReady && player.playbackState == Player.STATE_READY) {
-                ensurePresenceManager()
-            } else {
-                discordRpc?.closeRPC()
-            }
+
         }
 
         combine(
@@ -711,7 +688,7 @@ class MusicService :
                     }
                 }
             }
-        
+
         dataStore.data
             .map { (it[AudioCrossfadeDurationKey] ?: 0) * 1000 }
             .distinctUntilChanged()
@@ -774,22 +751,22 @@ class MusicService :
             audioNormalizationEnabled.value = normalizeAudio
             Timber.tag("AudioNormalization").d("Audio normalization enabled: $normalizeAudio")
             Timber.tag("AudioNormalization").d("Format loudnessDb: ${format?.loudnessDb}, perceptualLoudnessDb: ${format?.perceptualLoudnessDb}")
-            
+
             normalizeFactor.value =
                 if (normalizeAudio) {
                     val loudness = format?.loudnessDb ?: format?.perceptualLoudnessDb
-                    
+
                     if (loudness != null) {
                         val loudnessDb = loudness.toFloat()
                         var factor = 10f.pow(-loudnessDb / 20)
-                        
+
                         Timber.tag("AudioNormalization").d("Calculated raw normalization factor: $factor (from loudness: $loudnessDb)")
-                        
+
                         if (factor > 1f) {
                             factor = min(factor, maxSafeGainFactor)
                             Timber.tag("AudioNormalization").d("Factor capped at maxSafeGainFactor: $factor")
                         }
-                        
+
                         Timber.tag("AudioNormalization").i("Applying normalization factor: $factor")
                         factor
                     } else {
@@ -802,39 +779,6 @@ class MusicService :
                 }
         }
 
-        dataStore.data
-            .map { it[DiscordTokenKey] to (it[EnableDiscordRPCKey] ?: true) }
-            .debounce(300)
-            .distinctUntilChanged()
-            .collectLatest(scope) { (key, enabled) ->
-                val newRpc =
-                    withContext(Dispatchers.IO) {
-                        if (!key.isNullOrBlank() && enabled) {
-                            runCatching { DiscordRPC(this@MusicService, key) }
-                                .onFailure { Timber.tag("MusicService").e(it, "failed to create DiscordRPC client") }
-                                .getOrNull()
-                        } else {
-                            null
-                        }
-                    }
-
-                try {
-                    if (discordRpc?.isRpcRunning() == true) {
-                        withContext(Dispatchers.IO) { discordRpc?.closeRPC() }
-                    }
-                } catch (_: Exception) {}
-                discordRpc = newRpc
-
-                if (discordRpc != null) {
-                    if (player.playbackState == Player.STATE_READY && player.playWhenReady) {
-                        currentSong.value?.let {
-                            ensurePresenceManager()
-                        }
-                    }
-                } else {
-                    try { DiscordPresenceManager.stop() } catch (_: Exception) {}
-                }
-            }
 
         dataStore.data
             .map { prefs ->
@@ -851,52 +795,6 @@ class MusicService :
                 trimPlayerCacheToBytes(limitBytes)
             }
 
-        dataStore.data
-            .map { it[EnableLastFMScrobblingKey] ?: false }
-            .debounce(300)
-            .distinctUntilChanged()
-            .collect(scope) { enabled ->
-                if (enabled && scrobbleManager == null) {
-                    val delayPercent = dataStore.get(ScrobbleDelayPercentKey, LastFM.DEFAULT_SCROBBLE_DELAY_PERCENT)
-                    val minSongDuration = dataStore.get(ScrobbleMinSongDurationKey, LastFM.DEFAULT_SCROBBLE_MIN_SONG_DURATION)
-                    val delaySeconds = dataStore.get(ScrobbleDelaySecondsKey, LastFM.DEFAULT_SCROBBLE_DELAY_SECONDS)
-                    
-                    scrobbleManager = com.nikhil.yt.utils.ScrobbleManager(
-                        ioScope,
-                        minSongDuration = minSongDuration,
-                        scrobbleDelayPercent = delayPercent,
-                        scrobbleDelaySeconds = delaySeconds
-                    )
-                    scrobbleManager?.useNowPlaying = dataStore.get(LastFMUseNowPlaying, false)
-                } else if (!enabled && scrobbleManager != null) {
-                    scrobbleManager?.destroy()
-                    scrobbleManager = null
-                }
-            }
-
-        dataStore.data
-            .map { it[LastFMUseNowPlaying] ?: false }
-            .distinctUntilChanged()
-            .collectLatest(scope) {
-                scrobbleManager?.useNowPlaying = it
-            }
-
-        dataStore.data
-            .map { prefs ->
-                Triple(
-                    prefs[ScrobbleDelayPercentKey] ?: LastFM.DEFAULT_SCROBBLE_DELAY_PERCENT,
-                    prefs[ScrobbleMinSongDurationKey] ?: LastFM.DEFAULT_SCROBBLE_MIN_SONG_DURATION,
-                    prefs[ScrobbleDelaySecondsKey] ?: LastFM.DEFAULT_SCROBBLE_DELAY_SECONDS
-                )
-            }
-            .distinctUntilChanged()
-            .collect(scope) { (delayPercent, minSongDuration, delaySeconds) ->
-                scrobbleManager?.let {
-                    it.scrobbleDelayPercent = delayPercent
-                    it.minSongDuration = minSongDuration
-                    it.scrobbleDelaySeconds = delaySeconds
-                }
-            }
 
         scope.launch(Dispatchers.IO) {
             if (dataStore.get(PersistentQueueKey, true)) {
@@ -918,7 +816,7 @@ class MusicService :
                         automixSeedMediaId = player.currentMetadata?.id?.trim()?.takeIf { it.isNotBlank() }
                     }
                 }
-                
+
                 readPersistentObject<PersistPlayerState>(PERSISTENT_PLAYER_STATE_FILE)
                     ?.let { playerState ->
                     delay(1000)
@@ -926,11 +824,11 @@ class MusicService :
                         player.repeatMode = playerState.repeatMode
                         player.shuffleModeEnabled = playerState.shuffleModeEnabled
                         playerVolume.value = playerState.volume
-                        
+
                         if (playerState.currentMediaItemIndex < player.mediaItemCount) {
                             player.seekTo(playerState.currentMediaItemIndex, playerState.currentPosition)
                         }
-                        
+
                         currentMediaMetadata.value = player.currentMetadata
                         updateNotification()
                     }
@@ -966,67 +864,6 @@ class MusicService :
         }
     }
 
-    private fun ensurePresenceManager() {
-        if (DiscordPresenceManager.isRunning() && lastPresenceToken != null) return
-
-        scope.launch {
-            if (!dataStore.get(EnableDiscordRPCKey, true)) {
-                if (DiscordPresenceManager.isRunning()) {
-                    Timber.tag("MusicService").d("Discord RPC disabled → stopping presence manager")
-                    try { DiscordPresenceManager.stop() } catch (_: Exception) {}
-                    lastPresenceToken = null
-                }
-                return@launch
-            }
-
-            val key: String = dataStore.get(DiscordTokenKey, "")
-            if (key.isNullOrBlank()) {
-                if (DiscordPresenceManager.isRunning()) {
-                    Timber.tag("MusicService").d("No Discord token → stopping presence manager")
-                    try { DiscordPresenceManager.stop() } catch (_: Exception) {}
-                    lastPresenceToken = null
-                }
-                return@launch
-            }
-
-            if (DiscordPresenceManager.isRunning() && lastPresenceToken == key) {
-                // try {
-                //     if (DiscordPresenceManager.restart()) {
-                //         Timber.tag("MusicService").d("Presence manager restarted with same token")
-                //     }
-                // } catch (ex: Exception) {
-                //     Timber.tag("MusicService").e(ex, "Failed to restart presence manager")
-                // }
-                return@launch
-            }
-
-            try {
-                DiscordPresenceManager.stop()
-                DiscordPresenceManager.start(
-                    context = this@MusicService,
-                    token = key,
-                    songProvider = { player.currentMetadata?.let { createTransientSongFromMedia(it) } ?: currentSong.value },
-                    positionProvider = { player.currentPosition },
-                    isPausedProvider = { !player.isPlaying },
-                    intervalProvider = { getPresenceIntervalMillis(this@MusicService) }
-                )
-                Timber.tag("MusicService").d("Presence manager started with token=$key")
-                lastPresenceToken = key
-            } catch (ex: Exception) {
-                Timber.tag("MusicService").e(ex, "Failed to start presence manager")
-            }
-        }
-    }
-
-    private fun canUpdatePresence(): Boolean {
-        val now = System.currentTimeMillis()
-        synchronized(this) {
-            return if (now - lastPresenceUpdateTime > MIN_PRESENCE_UPDATE_INTERVAL) {
-                lastPresenceUpdateTime = now
-                true
-            } else false
-        }
-    }
 
     private fun setupAudioFocusRequest() {
         audioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
@@ -1103,7 +940,7 @@ class MusicService :
                     player.play()
                     wasPlayingBeforeAudioFocusLoss = false
                 }
-        
+
                 lastAudioFocusState = focusChange
             }
 
@@ -1118,7 +955,7 @@ class MusicService :
 
     private fun requestAudioFocus(): Boolean {
         if (hasAudioFocus) return true
-    
+
         audioFocusRequest?.let { request ->
             val result = audioManager.requestAudioFocus(request)
             hasAudioFocus = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
@@ -1450,7 +1287,7 @@ class MusicService :
         if (!permanentShuffle) {
             player.shuffleModeEnabled = false
         }
-        
+
         clearAutomix()
         automixSeedMediaId = null
         autoAddedMediaIds.clear()
@@ -1488,10 +1325,10 @@ class MusicService :
 
                 val windowStart = (index - 20).coerceAtLeast(0)
                 val windowEnd = (index + 50).coerceAtMost(items.size)
-                
+
                 val initialChunk = items.subList(windowStart, windowEnd)
                 val relativeIndex = index - windowStart
-                
+
                 player.setMediaItems(
                     initialChunk,
                     if (relativeIndex > 0) relativeIndex else 0,
@@ -1576,14 +1413,14 @@ class MusicService :
             val radioItems = initialStatus.items.filter { item ->
                 item.mediaId != currentMediaId
             }
-            
+
             if (radioItems.isNotEmpty()) {
                 val itemCount = player.mediaItemCount
-                
+
                 if (itemCount > currentIndex + 1) {
                     player.removeMediaItems(currentIndex + 1, itemCount)
                 }
-                
+
                 player.addMediaItems(currentIndex + 1, radioItems)
             }
 
@@ -1602,7 +1439,7 @@ class MusicService :
     }
 
     fun getAutomix(playlistId: String) {
-        if (dataStore.get(AutoLoadMoreKey, true) && 
+        if (dataStore.get(AutoLoadMoreKey, true) &&
             player.repeatMode == REPEAT_MODE_OFF) {
             scope.launch(Dispatchers.IO + SilentHandler) {
                 val seedAtRequest =
@@ -3004,7 +2841,7 @@ class MusicService :
                         val drift = kotlin.math.abs(player.currentPosition - targetPos)
                         val seekThreshold = if (togetherIsOnlineSession) 4000L else 2000L
                         val threshold = if (state.isPlaying) seekThreshold else 200L
-                        
+
                         if (drift > threshold) {
                             player.seekTo(targetPos)
                             player.prepare()
@@ -3408,7 +3245,6 @@ class MusicService :
     val timelineEmpty = player.currentTimeline.isEmpty || player.mediaItemCount == 0 || player.currentMediaItem == null
     currentMediaMetadata.value = if (timelineEmpty) null else (mediaItem?.metadata ?: player.currentMetadata)
 
-    scrobbleManager?.onSongStop()
 
     if (!timelineEmpty &&
         dataStore.get(AutoLoadMoreKey, true) &&
@@ -3444,11 +3280,10 @@ class MusicService :
             if (player.playbackState != STATE_IDLE) {
                 player.addMediaItems(mediaItems.drop(1))
             } else {
-                scope.launch { discordRpc?.stopActivity() }
             }
         }
     }
-    
+
     if (!suppressAutoPlayback &&
         !timelineEmpty &&
         dataStore.get(AutoLoadMoreKey, true) &&
@@ -3488,7 +3323,6 @@ class MusicService :
     }
 
     if (player.playWhenReady && player.playbackState == Player.STATE_READY) {
-        scrobbleManager?.onSongStart(player.currentMetadata, duration = player.duration)
     }
 
     scope.launch {
@@ -3497,7 +3331,6 @@ class MusicService :
             saveQueueToDisk()
         }
     }
-    ensurePresenceManager()
 }
 
     override fun onPlaybackStateChanged(@Player.State playbackState: Int) {
@@ -3527,7 +3360,6 @@ class MusicService :
 
     if (playbackState == Player.STATE_IDLE || playbackState == Player.STATE_ENDED) {
         crossfadeAudio?.stop(resetMainFade = true)
-        scrobbleManager?.onSongStop()
     }
 
     if (!suppressAutoPlayback &&
@@ -3588,57 +3420,7 @@ class MusicService :
         }
     }
 
-    ensurePresenceManager()
-    scope.launch {
-        try {
-            val token = withContext(Dispatchers.IO) { dataStore.get(DiscordTokenKey, "") }
-            if (token.isNotBlank() && DiscordPresenceManager.isRunning()) {
-                val mediaId = player.currentMediaItem?.mediaId
-                val song = if (mediaId != null) withContext(Dispatchers.IO) { database.song(mediaId).first() } else null
-                val finalSong = song ?: player.currentMetadata?.let { createTransientSongFromMedia(it) }
 
-                if (canUpdatePresence()) {
-                    val success = withContext(Dispatchers.IO) {
-                        DiscordPresenceManager.updateNow(
-                            context = this@MusicService,
-                            token = token,
-                            song = finalSong,
-                            positionMs = player.currentPosition,
-                            isPaused = !player.playWhenReady,
-                        )
-                    }
-                    if (!success) {
-                        Timber.tag("MusicService").w("immediate presence update returned false — attempting restart")
-                        if (DiscordPresenceManager.isRunning()) {
-                            try {
-                                if (DiscordPresenceManager.restart()) {
-                                    Timber.tag("MusicService").d("presence manager restarted after failed update")
-                                }
-                            } catch (ex: Exception) {
-                                Timber.tag("MusicService").e(ex, "restart after failed presence update threw")
-                            }
-                        }
-                    }
-
-                    try {
-                        val lbEnabled = withContext(Dispatchers.IO) { dataStore.get(ListenBrainzEnabledKey, false) }
-                        val lbToken = withContext(Dispatchers.IO) { dataStore.get(ListenBrainzTokenKey, "") }
-                        if (lbEnabled && !lbToken.isNullOrBlank()) {
-                            scope.launch(Dispatchers.IO) {
-                                try {
-                                    ListenBrainzManager.submitPlayingNow(this@MusicService, lbToken, finalSong, player.currentPosition)
-                                } catch (ie: Exception) {
-                                    Timber.tag("MusicService").v(ie, "ListenBrainz playing_now submit failed")
-                                }
-                            }
-                        }
-                    } catch (_: Exception) {}
-                }
-            }
-        } catch (e: Exception) {
-            Timber.tag("MusicService").v(e, "immediate presence update failed")
-        }
-    }
 }
 
 
@@ -3717,46 +3499,7 @@ class MusicService :
 
        if (events.containsAny(EVENT_TIMELINE_CHANGED, EVENT_POSITION_DISCONTINUITY)) {
             currentMediaMetadata.value = player.currentMetadata
-            scope.launch {
-                try {
-                    val token = dataStore.get(DiscordTokenKey, "")
-                    if (token.isNotBlank() && DiscordPresenceManager.isRunning()) {
-                        val mediaId = player.currentMediaItem?.mediaId
-                        val song = if (mediaId != null) withContext(Dispatchers.IO) { database.song(mediaId).first() } else null
-                        val finalSong = song ?: player.currentMetadata?.let { createTransientSongFromMedia(it) }
 
-                        if (canUpdatePresence()) {
-                            val success = DiscordPresenceManager.updateNow(
-                                context = this@MusicService,
-                                token = token,
-                                song = finalSong,
-                                positionMs = player.currentPosition,
-                                isPaused = !player.isPlaying,
-                            )
-                            if (!success) {
-                                Timber.tag("MusicService").w("transition immediate presence update failed — attempting restart")
-                                try { DiscordPresenceManager.stop(); DiscordPresenceManager.start(this@MusicService, dataStore.get(DiscordTokenKey, ""), { song }, { player.currentPosition }, { !player.isPlaying }, { getPresenceIntervalMillis(this@MusicService) }) } catch (_: Exception) {}
-                            }
-                            try {
-                                val lbEnabled = dataStore.get(ListenBrainzEnabledKey, false)
-                                val lbToken = dataStore.get(ListenBrainzTokenKey, "")
-                                if (lbEnabled && !lbToken.isNullOrBlank()) {
-                                    scope.launch(Dispatchers.IO) {
-                                        try {
-                                            ListenBrainzManager.submitPlayingNow(this@MusicService, lbToken, finalSong, player.currentPosition)
-                                        } catch (ie: Exception) {
-                                            Timber.tag("MusicService").v(ie, "ListenBrainz playing_now submit failed on transition")
-                                        }
-                                    }
-                                }
-
-                            } catch (_: Exception) {}
-                        }
-                    }
-                } catch (e: Exception) {
-                    Timber.tag("MusicService").v(e, "immediate presence update failed on transition")
-                }
-            }
         }
 
         if (events.containsAny(Player.EVENT_IS_PLAYING_CHANGED, Player.EVENT_MEDIA_ITEM_TRANSITION)) {
@@ -3777,62 +3520,9 @@ class MusicService :
             )
 
 
-
-
-
-            scope.launch {
-                try {
-                    val token = withContext(Dispatchers.IO) { dataStore.get(DiscordTokenKey, "") }
-                    if (token.isNotBlank() && DiscordPresenceManager.isRunning()) {
-                        val song = if (currentMediaId != null) withContext(Dispatchers.IO) { database.song(currentMediaId).first() } else null
-                        val finalSong = song ?: currentMetadata?.let { createTransientSongFromMedia(it) }
-
-                        if (canUpdatePresence()) {
-                            val success = withContext(Dispatchers.IO) {
-                                DiscordPresenceManager.updateNow(
-                                    context = this@MusicService,
-                                    token = token,
-                                    song = finalSong,
-                                    positionMs = currentPosition,
-                                    isPaused = !isPlaying,
-                                )
-                            }
-                            if (!success) {
-                                Timber.tag("MusicService").w("isPlaying/mediaTransition immediate presence update failed — restarting manager")
-                                if (DiscordPresenceManager.isRunning()) {
-                                    try { DiscordPresenceManager.stop(); DiscordPresenceManager.restart() } catch (_: Exception) {}
-                                }
-                            }
-                            try {
-                                val lbEnabled = withContext(Dispatchers.IO) { dataStore.get(ListenBrainzEnabledKey, false) }
-                                val lbToken = withContext(Dispatchers.IO) { dataStore.get(ListenBrainzTokenKey, "") }
-                                if (lbEnabled && !lbToken.isNullOrBlank()) {
-                                    scope.launch(Dispatchers.IO) {
-                                        try {
-                                            ListenBrainzManager.submitPlayingNow(this@MusicService, lbToken, finalSong, currentPosition)
-                                        } catch (ie: Exception) {
-                                            Timber.tag("MusicService").v(ie, "ListenBrainz playing_now submit failed for isPlaying/mediaTransition")
-                                        }
-                                    }
-                                }
-
-                            } catch (_: Exception) {}
-                        }
-                    }
-                } catch (e: Exception) {
-                    Timber.tag("MusicService").v(e, "immediate presence update failed for isPlaying/mediaTransition")
-                }
-            }
         }
 
-   if (events.containsAny(Player.EVENT_IS_PLAYING_CHANGED)) {
-        ensurePresenceManager()
-        scrobbleManager?.onPlayerStateChanged(player.isPlaying, player.currentMetadata, duration = player.duration)
-    } else if (events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)) {
-        ensurePresenceManager()
-    } else {
-        ensurePresenceManager()
-    }
+
   }
 
 
@@ -4063,7 +3753,7 @@ class MusicService :
             .setFlags(FLAG_IGNORE_CACHE_ON_ERROR)
 
     private fun createDataSourceFactory(): DataSource.Factory {
-        return ResolvingDataSource.Factory(createCacheDataSource()) { dataSpec ->
+        val streaming = ResolvingDataSource.Factory(createCacheDataSource()) { dataSpec ->
             val mediaId = dataSpec.key ?: error("No media id")
 
             val requiredCachedLength =
@@ -4147,7 +3837,7 @@ class MusicService :
                 val format = nonNullPlayback.format
                 val loudnessDb = nonNullPlayback.audioConfig?.loudnessDb
                 val perceptualLoudnessDb = nonNullPlayback.audioConfig?.perceptualLoudnessDb
-                
+
                 Timber.tag("AudioNormalization").d("Storing format for $mediaId with loudnessDb: $loudnessDb, perceptualLoudnessDb: $perceptualLoudnessDb")
                 if (loudnessDb == null && perceptualLoudnessDb == null) {
                     Timber.tag("AudioNormalization").w("No loudness data available from YouTube for video: $mediaId")
@@ -4179,6 +3869,7 @@ class MusicService :
                 return@Factory dataSpec.withUri(streamUrl.toUri()).subrange(dataSpec.uriPositionOffset, length)
             }
         }
+        return StoredDownloadDataSource.Factory(this, downloadStorage, streaming)
     }
 
     fun retryCurrentFromFreshStream() {
@@ -4321,25 +4012,6 @@ class MusicService :
                 }
             }
 
-            CoroutineScope(Dispatchers.IO).launch {
-                try {
-                    val song = database.song(mediaItem.mediaId).first()
-                        ?: return@launch
-
-                    val lbEnabled = dataStore.get(ListenBrainzEnabledKey, false)
-                    val lbToken = dataStore.get(ListenBrainzTokenKey, "")
-                    if (lbEnabled && !lbToken.isNullOrBlank()) {
-                        val endMs = System.currentTimeMillis()
-                        val startMs = endMs - playbackStats.totalPlayTimeMs
-                        try {
-                            ListenBrainzManager.submitFinished(this@MusicService, lbToken, song, startMs, endMs)
-                        } catch (ie: Exception) {
-                            Timber.tag("MusicService").v(ie, "ListenBrainz finished submit failed")
-                        }
-                    }
-                } catch (_: Exception) {
-                }
-            }
 
             CoroutineScope(Dispatchers.IO).launch {
                 runCatching { registerRemoteListeningHistory(mediaItem.mediaId) }
@@ -4494,7 +4166,7 @@ class MusicService :
                 mediaItemIndex = currentMediaItemIndex,
                 position = currentPosition
             )
-            
+
             val persistAutomix =
                 PersistQueue(
                     title = "automix",
@@ -4512,7 +4184,7 @@ class MusicService :
                 currentMediaItemIndex = currentMediaItemIndex, // Redundant but part of data class
                 playbackState = playbackState
             )
-            
+
             writePersistentObject(PERSISTENT_QUEUE_FILE, persistQueue)
             writePersistentObject(PERSISTENT_AUTOMIX_FILE, persistAutomix)
             writePersistentObject(PERSISTENT_PLAYER_STATE_FILE, persistPlayerState)
@@ -4526,13 +4198,8 @@ class MusicService :
         try {
             scope.launch { stopTogetherInternal() }
         } catch (_: Exception) {}
-        try {
-            DiscordPresenceManager.stop()
-        } catch (_: Exception) {}
-        try {
-            discordRpc?.closeRPC()
-        } catch (_: Exception) {}
-        discordRpc = null
+
+
         try {
             connectivityObserver.unregister()
         } catch (_: Exception) {}
@@ -4609,20 +4276,7 @@ class MusicService :
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
-        try {
-            scope.launch {
-                try { discordRpc?.stopActivity() } catch (_: Exception) {}
-            }
-        } catch (_: Exception) {}
 
-        try {
-            if (discordRpc?.isRpcRunning() == true) {
-                try { discordRpc?.closeRPC() } catch (_: Exception) {}
-            }
-        } catch (_: Exception) {}
-        discordRpc = null
-        try { DiscordPresenceManager.stop() } catch (_: Exception) {}
-        lastPresenceToken = null
 
         val stopMusicOnTaskClearEnabled = dataStore.get(StopMusicOnTaskClearKey, false)
 
@@ -4739,6 +4393,5 @@ class MusicService :
         const val PERSISTENT_AUTOMIX_FILE = "persistent_automix.data"
         const val PERSISTENT_PLAYER_STATE_FILE = "persistent_player_state.data"
         const val MAX_CONSECUTIVE_ERR = 5
-        const val MIN_PRESENCE_UPDATE_INTERVAL = 20_000L
     }
 }

@@ -28,10 +28,8 @@ include(":app")
 include(":innertube")
 include(":kugou")
 include(":lrclib")
-include(":lastfm")
 include("simpmusic")
 include(":betterlyrics")
-include(":kizzy")
 include(":canvas")
 
 // Use a local copy of NewPipe Extractor by uncommenting the lines below.

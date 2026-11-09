@@ -5,7 +5,6 @@
  */
 
 
-
 package com.nikhil.yt.ui.player
 
 import androidx.compose.material3.CircularProgressIndicator
@@ -178,14 +177,10 @@ fun SwipeableMiniPlayerBox(
 
                                     if (isRightSwipe && canSkipPrevious) {
                                         playerConnection.player.seekToPreviousMediaItem()
-                                        if (com.nikhil.yt.ui.screens.settings.DiscordPresenceManager.isRunning()) {
-                                            try { com.nikhil.yt.ui.screens.settings.DiscordPresenceManager.restart() } catch (_: Exception) {}
-                                        }
+
                                     } else if (!isRightSwipe && canSkipNext) {
                                         playerConnection.player.seekToNext()
-                                        if (com.nikhil.yt.ui.screens.settings.DiscordPresenceManager.isRunning()) {
-                                            try { com.nikhil.yt.ui.screens.settings.DiscordPresenceManager.restart() } catch (_: Exception) {}
-                                        }
+
                                     }
                                 }
 
@@ -272,13 +267,13 @@ fun MiniPlayerPlayPauseButton(
                 }
         ) {
             // Placeholder: The actual image background logic was intricate inside NewMiniPlayer,
-            // but here we just simplify or expect it passed? 
+            // but here we just simplify or expect it passed?
             // In the original NewMiniPlayer, it was just a border and clickable, NO image actually shown in this specific box in the new design?
             // Wait, NewMiniPlayer lines 282+ had `Box`.
             // Ah, the image was the BACKGROUND of the main box in some designs, but here it's "Play/Pause button with thumbnail background" comment.
-            // But checking the code, it's just a Box with border. 
+            // But checking the code, it's just a Box with border.
             // The icon is inside.
-            
+
             if (isLoading) {
                 VeluneLoader(size = 20.dp)
             } else {
@@ -374,7 +369,7 @@ fun NewMiniPlayerContent(
     val playbackState by playerConnection.playbackState.collectAsState()
     val mediaMetadata by playerConnection.mediaMetadata.collectAsState()
     val currentSong by playerConnection.currentSong.collectAsState(initial = null)
-    
+
     // Track loading state when buffering
     val isLoading = playbackState == Player.STATE_BUFFERING
     val isLiked = currentSong?.song?.liked == true

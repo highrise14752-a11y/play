@@ -154,16 +154,9 @@ fun VeluneAccountSettingsScreen(
                 )
             }
 
-            // Integrations Section
+            // Playlist sync
             item {
-                AccountSectionHeader("Integrations")
-            }
-            item {
-                AccountSettingsItem(
-                    icon = painterResource(R.drawable.integration),
-                    title = "Integrations",
-                    onClick = { navController.navigate("settings/integration") }
-                )
+                AccountSectionHeader("Sync")
             }
             item {
                 AccountSettingsItem(

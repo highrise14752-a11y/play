@@ -5,7 +5,6 @@
  */
 
 
-
 package com.nikhil.yt.playback
 
 import android.content.Context
@@ -98,7 +97,7 @@ class PlayerConnection(
         currentMediaItemIndex.value = player.currentMediaItemIndex
         shuffleModeEnabled.value = player.shuffleModeEnabled
         repeatMode.value = player.repeatMode
-        
+
         if (currentMeta == null && player.mediaItemCount > 0) {
             val mediaItem = player.currentMediaItem
             if (mediaItem != null) {
@@ -140,12 +139,7 @@ class PlayerConnection(
         player.seekToNext()
         player.prepare()
         player.playWhenReady = true
-        // Immediately restart the Discord presence updater so it picks up the new track without waiting
-        if (com.nikhil.yt.ui.screens.settings.DiscordPresenceManager.isRunning()) {
-            try {
-                com.nikhil.yt.ui.screens.settings.DiscordPresenceManager.restart()
-            } catch (_: Exception) {}
-        }
+
     }
 
     fun seekToPrevious() {
@@ -157,12 +151,7 @@ class PlayerConnection(
         player.seekToPrevious()
         player.prepare()
         player.playWhenReady = true
-        // Immediately restart the Discord presence updater so it picks up the new track without waiting
-        if (com.nikhil.yt.ui.screens.settings.DiscordPresenceManager.isRunning()) {
-            try {
-                com.nikhil.yt.ui.screens.settings.DiscordPresenceManager.restart()
-            } catch (_: Exception) {}
-        }
+
     }
 
     override fun onPlaybackStateChanged(state: Int) {

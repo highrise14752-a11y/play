@@ -23,22 +23,11 @@ android {
     applicationId = "com.highrise14752.play"
         minSdk = 26
         targetSdk = 36
-        versionCode = 11
-        versionName = "1.1.2-play.1"
+        versionCode = 12
+        versionName = "1.1.2-play.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
-
-        val lastfmApiKey =
-            localProperties.getProperty("LASTFM_API_KEY")
-                ?: System.getenv("LASTFM_API_KEY")
-                ?: ""
-        val lastfmSecret =
-            localProperties.getProperty("LASTFM_SECRET")
-                ?: System.getenv("LASTFM_SECRET")
-                ?: ""
-        buildConfigField("String", "LASTFM_API_KEY", "\"$lastfmApiKey\"")
-        buildConfigField("String", "LASTFM_SECRET", "\"$lastfmSecret\"")
 
         val togetherBearerToken =
             localProperties.getProperty("TOGETHER_BEARER_TOKEN")
@@ -215,7 +204,6 @@ dependencies {
     implementation(libs.squigglyslider)
 
     implementation(libs.room.runtime)
-    implementation(libs.kuromoji.ipadic)
     ksp(libs.room.compiler)
     implementation(libs.room.ktx)
 
@@ -229,9 +217,7 @@ dependencies {
     implementation(project(":innertube"))
     implementation(project(":kugou"))
     implementation(project(":lrclib"))
-    implementation(project(":lastfm"))
     implementation(project(":betterlyrics"))
-    implementation(project(":kizzy"))
     implementation(project(":simpmusic"))
     implementation(project(":canvas"))
     implementation("com.github.Kyant0:m3color:2025.4")

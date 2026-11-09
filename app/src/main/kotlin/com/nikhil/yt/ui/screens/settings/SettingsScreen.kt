@@ -138,12 +138,7 @@ data class PremiumSettingsItem(
     val onClick: () -> Unit,
 )
 
-data class SettingsIntegrationAction(
-    val icon: Painter,
-    val label: String,
-    val onClick: () -> Unit,
-    val accentColor: Color,
-)
+
 
 private fun filterQuickActions(
     actions: List<SettingsQuickAction>,
@@ -191,13 +186,6 @@ private fun filterInternalSettingsItems(
     return items.filter { item -> matchesSearchQuery(item, query) }
 }
 
-private fun filterIntegrations(
-    integrations: List<SettingsIntegrationAction>,
-    query: String,
-): List<SettingsIntegrationAction> {
-    if (query.isBlank()) return integrations
-    return integrations.filter { it.label.contains(query, ignoreCase = true) }
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -269,7 +257,6 @@ fun SettingsScreen(
     var heroVisible by remember { mutableStateOf(false) }
     var bannerVisible by remember { mutableStateOf(false) }
     var quickActionsVisible by remember { mutableStateOf(false) }
-    var integrationsVisible by remember { mutableStateOf(false) }
     var categoriesVisible by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
@@ -280,7 +267,6 @@ fun SettingsScreen(
         delay(60)
         quickActionsVisible = true
         delay(70)
-        integrationsVisible = true
         delay(70)
         categoriesVisible = true
     }
@@ -310,28 +296,14 @@ fun SettingsScreen(
             onClick = { navController.navigate("settings/privacy") },
             accentColor = MaterialTheme.colorScheme.error,
         ),
-    )
-
-    val integrationActions = listOf(
-        SettingsIntegrationAction(
-            icon = painterResource(R.drawable.discord),
-            label = stringResource(R.string.discord),
-            onClick = { navController.navigate("settings/discord") },
-            accentColor = Color(0xFF5865F2),
-        ),
-        SettingsIntegrationAction(
-            icon = painterResource(R.drawable.integration),
-            label = stringResource(R.string.integration),
-            onClick = { navController.navigate("settings/integration") },
-            accentColor = MaterialTheme.colorScheme.secondary,
-        ),
-        SettingsIntegrationAction(
+            SettingsQuickAction(
             icon = painterResource(R.drawable.fire),
             label = stringResource(R.string.music_together),
             onClick = { navController.navigate("settings/music_together") },
             accentColor = MaterialTheme.colorScheme.tertiary,
         ),
     )
+
 
     val resetSearch: () -> Unit = {
         isSearching = false
@@ -610,73 +582,13 @@ fun SettingsScreen(
                 onClick = { navController.navigate("customize_background") },
             ),
         )
-        add(
-            PremiumSettingsItem(
-                icon = painterResource(R.drawable.discord),
-                title = stringResource(R.string.discord_integration),
-                subtitle = stringResource(R.string.integration),
-                accentColor = Color(0xFF5865F2),
-                keywords = listOf(
-                    "discord",
-                    "rpc",
-                    "rich presence",
-                    "status",
-                    "activity",
-                ),
-                onClick = { navController.navigate("settings/discord") },
-            ),
-        )
-        add(
-            PremiumSettingsItem(
-                icon = painterResource(R.drawable.security),
-                title = stringResource(R.string.advanced_login),
-                subtitle = stringResource(R.string.discord),
-                accentColor = Color(0xFF5865F2),
-                keywords = listOf(
-                    "token",
-                    "login",
-                    "authentication",
-                    "discord login",
-                ),
-                onClick = { navController.navigate("settings/discord/login") },
-            ),
-        )
-        add(
-            PremiumSettingsItem(
-                icon = painterResource(R.drawable.experiment),
-                title = stringResource(R.string.experimental_features),
-                subtitle = stringResource(R.string.experimental_features_description),
-                accentColor = MaterialTheme.colorScheme.tertiary,
-                keywords = listOf(
-                    "experimental",
-                    "labs",
-                    "advanced",
-                    "discord experimental",
-                    "internal",
-                ),
-                onClick = { navController.navigate("settings/discord/experimental") },
-            ),
-        )
-        add(
-            PremiumSettingsItem(
-                icon = painterResource(R.drawable.integration),
-                title = stringResource(R.string.lastfm_integration),
-                subtitle = stringResource(R.string.integration),
-                accentColor = MaterialTheme.colorScheme.secondary,
-                keywords = listOf(
-                    "lastfm",
-                    "last.fm",
-                    "scrobble",
-                    "listening history",
-                ),
-                onClick = { navController.navigate("settings/lastfm") },
-            ),
-        )
+
+
         add(
             PremiumSettingsItem(
                 icon = painterResource(R.drawable.fire),
                 title = stringResource(R.string.music_together),
-                subtitle = stringResource(R.string.integration),
+                subtitle = stringResource(R.string.music_together),
                 accentColor = MaterialTheme.colorScheme.tertiary,
                 keywords = listOf(
                     "together",
@@ -696,10 +608,6 @@ fun SettingsScreen(
         action.copy(onClick = { resetSearch(); originalOnClick() })
     }
 
-    val wrappedIntegrations = integrationActions.map { action ->
-        val originalOnClick = action.onClick
-        action.copy(onClick = { resetSearch(); originalOnClick() })
-    }
 
     val wrappedCategories = settingsCategories.map { category ->
         category.copy(
@@ -719,20 +627,17 @@ fun SettingsScreen(
     val showSearchBar = isSearching || queryText.isNotBlank()
 
     val filteredQuickActions = filterQuickActions(wrappedQuickActions, queryText)
-    val filteredIntegrations = filterIntegrations(wrappedIntegrations, queryText)
     val filteredCategories = filterSettingsCategories(wrappedCategories, queryText)
     val filteredInternalSettings = filterInternalSettingsItems(wrappedInternalSettings, queryText)
 
     val hasSearchResults by remember(
         filteredQuickActions,
         filteredCategories,
-        filteredIntegrations,
         filteredInternalSettings,
     ) {
         derivedStateOf {
             filteredQuickActions.isNotEmpty() ||
                     filteredCategories.isNotEmpty() ||
-                    filteredIntegrations.isNotEmpty() ||
                     filteredInternalSettings.isNotEmpty()
         }
     }
@@ -846,36 +751,6 @@ fun SettingsScreen(
                     }
                 }
 
-
-
-
-                if (queryText.isBlank() || filteredIntegrations.isNotEmpty()) {
-                    item(key = "integrations") {
-                        AnimatedVisibility(
-                            visible = integrationsVisible,
-                            enter = fadeIn(spring(stiffness = Spring.StiffnessLow)) +
-                                    slideInVertically(
-                                        initialOffsetY = { it / 6 },
-                                        animationSpec = spring(
-                                            stiffness = Spring.StiffnessLow,
-                                            dampingRatio = 0.85f,
-                                        ),
-                                    ),
-                        ) {
-                            val toShow = if (queryText.isBlank()) {
-                                wrappedIntegrations
-                            } else {
-                                filteredIntegrations
-                            }
-                            SettingsIntegrationsRow(
-                                integrations = toShow,
-                                modifier = Modifier
-                                    .padding(horizontal = 16.dp)
-                                    .padding(bottom = 12.dp),
-                            )
-                        }
-                    }
-                }
 
                 if (queryText.isNotBlank() && !hasSearchResults) {
                     item(key = "empty") {
@@ -1036,16 +911,7 @@ fun SettingsScreen(
                             )
                         }
                     } else {
-                        if (filteredIntegrations.isNotEmpty()) {
-                            item {
-                                SettingsIntegrationsRow(
-                                    integrations = filteredIntegrations,
-                                    modifier = Modifier
-                                        .padding(horizontal = 16.dp)
-                                        .padding(bottom = 12.dp),
-                                )
-                            }
-                        }
+
 
                         if (filteredInternalSettings.isNotEmpty()) {
                             item {
@@ -1411,115 +1277,6 @@ private fun SettingsQuickActionTile(
     }
 }
 
-@Composable
-private fun SettingsIntegrationsRow(
-    integrations: List<SettingsIntegrationAction>,
-    modifier: Modifier = Modifier,
-) {
-    if (integrations.isEmpty()) return
-
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(28.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-    ) {
-        Column(
-            modifier = Modifier.padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(30.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(MaterialTheme.colorScheme.surfaceContainerHighest),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.integration),
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.secondary,
-                        modifier = Modifier.size(16.dp),
-                    )
-                }
-
-                Text(
-                    text = stringResource(R.string.integrations),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-            }
-
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                items(
-                    count = integrations.size,
-                    key = { integrations[it].label },
-                ) { index ->
-                    IntegrationChip(action = integrations[index])
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun IntegrationChip(
-    action: SettingsIntegrationAction,
-    modifier: Modifier = Modifier,
-) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val isPressed by interactionSource.collectIsPressedAsState()
-    val scale by animateFloatAsState(
-        targetValue = if (isPressed) 0.95f else 1f,
-        animationSpec = spring(stiffness = Spring.StiffnessHigh),
-        label = "chipScale",
-    )
-
-    Surface(
-        modifier = modifier.scale(scale),
-        shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHighest,
-        onClick = action.onClick,
-        interactionSource = interactionSource,
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(28.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(action.accentColor.copy(alpha = 0.14f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    painter = action.icon,
-                    contentDescription = null,
-                    tint = action.accentColor,
-                    modifier = Modifier.size(16.dp),
-                )
-            }
-
-            Text(
-                text = action.label,
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-}
 
 @Composable
 private fun PremiumSettingsSection(
