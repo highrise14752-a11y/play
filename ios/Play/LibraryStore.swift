@@ -9,6 +9,7 @@ final class LibraryStore: ObservableObject {
     @Published var error: String?
     let api: MusicAPI
     let player: PlaybackController
+    lazy var together = TogetherSession(player: player)
     static let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     static let downloads = documents.appendingPathComponent("Downloads", isDirectory: true)
     private let index = documents.appendingPathComponent("library.json")

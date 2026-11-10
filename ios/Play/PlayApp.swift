@@ -9,6 +9,8 @@ struct PlayApp: App {
             RootView()
                 .environmentObject(library)
                 .environmentObject(library.player)
+                .environmentObject(library.together)
+                .environmentObject(library.player.haptics)
                 .tint(.cyan)
                 .preferredColorScheme(.dark)
         }

@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-only
 import SwiftUI
 import UniformTypeIdentifiers
+import UIKit
 
 struct RootView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var player: PlaybackController
+    @EnvironmentObject private var together: TogetherSession
+    @EnvironmentObject private var haptics: MusicHaptics
+    @Environment(\.scenePhase) private var scenePhase
     @State private var showingPlayer = false
 
     var body: some View {
@@ -42,6 +46,8 @@ struct RootView: View {
         .sheet(isPresented: $showingPlayer) {
             NavigationView { PlayerView() }.navigationViewStyle(.stack)
         }
+        .onChange(of: scenePhase) { haptics.setVisible($0 == .active) }
+        .onOpenURL { together.join(link: $0.absoluteString, name: "Listener") }
         .alert("Play", isPresented: Binding(get: { library.error != nil }, set: { if !$0 { library.error = nil } })) {
             Button("OK") { library.error = nil }
         } message: { Text(library.error ?? "") }
@@ -236,18 +242,23 @@ struct PlayerView: View {
 }
 
 struct SettingsView: View {
+    @EnvironmentObject private var together: TogetherSession
     @AppStorage("lyrics.style") private var style = "Apple Music"
     @AppStorage("lyrics.position") private var position = "Center"
     @AppStorage("lyrics.follow") private var follow = true
     var body: some View {
         Form {
+            Section("Playback") {
+                NavigationLink { HapticsSettingsView() } label: { Label("Music haptics", systemImage: "waveform") }
+                NavigationLink { TogetherView() } label: { Label("Music Together", systemImage: "person.2.wave.2") }
+            }
             Section("Lyrics") {
                 Picker("Animation style", selection: $style) {
                     ForEach(["Apple Music", "Fade", "None"], id: \.self) { Text($0) }
-                }
+                }.pickerStyle(.menu).accessibilityIdentifier("lyrics.animation")
                 Picker("Text position", selection: $position) {
                     ForEach(["Left", "Center", "Right"], id: \.self) { Text($0) }
-                }
+                }.pickerStyle(.menu).accessibilityIdentifier("lyrics.position")
                 Toggle("Automatic scrolling", isOn: $follow)
                 Text("Following requires timed lyrics. Drag to browse; following resumes after three seconds.")
                     .font(.caption).foregroundColor(.secondary)
@@ -264,5 +275,68 @@ struct SettingsView: View {
                     .font(.caption).foregroundColor(.secondary)
             }
         }.navigationTitle("Settings")
+    }
+}
+
+struct HapticsSettingsView: View {
+    @EnvironmentObject private var haptics: MusicHaptics
+    var body: some View {
+        Form {
+            Toggle("Music haptics", isOn: $haptics.enabled).disabled(!haptics.supported)
+            Text(haptics.supported ? haptics.status : "This device does not support Core Haptics.")
+                .font(.caption).foregroundColor(.secondary)
+            if haptics.supported {
+                Picker("Audio focus", selection: $haptics.mode) {
+                    ForEach(HapticMode.allCases, id: \.rawValue) { Text($0.rawValue).tag($0.rawValue) }
+                }
+                Slider(value: $haptics.intensity, in: 0...1) { Text("Intensity") }
+                Text("Intensity: \(Int(haptics.intensity * 100))%")
+                Text("Vibrations follow decoded audio, while Play is onscreen. Vocals emphasis is a frequency filter, not vocal isolation. Streaming formats that don’t expose decoded PCM cannot drive haptics.")
+                    .font(.caption).foregroundColor(.secondary)
+            }
+        }.navigationTitle("Music haptics")
+    }
+}
+
+struct TogetherView: View {
+    @EnvironmentObject private var together: TogetherSession
+    @AppStorage("together.name") private var name = "Listener"
+    @State private var link = ""
+    @State private var copied = false
+    var body: some View {
+        Form {
+            Section("Music Together") {
+                Text(together.status)
+                if let error = together.error { Text(error).foregroundColor(.orange) }
+                TextField("Your name", text: $name)
+                Text("Use the same Wi-Fi network. Each device streams the same song independently; local audio files are not transferred.")
+                    .font(.caption).foregroundColor(.secondary)
+            }
+            if !together.connected {
+                Section("Host a session") {
+                    Button("Start Music Together") { together.host(name: name) }
+                }
+                Section("Join a session") {
+                    TextField("Paste invitation link", text: $link).textInputAutocapitalization(.never).disableAutocorrection(true)
+                    Button("Join session") { together.join(link: link, name: name) }.disabled(link.isEmpty)
+                }
+            } else {
+                if together.isHost {
+                    Section("Invite friends") {
+                        if let invite = together.invite {
+                            Button(copied ? "Invitation copied" : "Copy invitation") { UIPasteboard.general.string = invite; copied = true }
+                            Text("Share this invitation privately. It grants access to your room.").font(.caption).foregroundColor(.secondary)
+                        }
+                        Toggle("Guests can control playback", isOn: $together.allowGuestControls)
+                    }
+                }
+                Section("Participants") {
+                    ForEach(together.participants) { person in
+                        HStack { Text(person.name); Spacer(); if person.isHost { Text("Host").foregroundColor(.secondary) } }
+                    }
+                }
+                Button("Leave session", role: .destructive) { together.leave(); copied = false }
+            }
+        }.navigationTitle("Music Together")
     }
 }

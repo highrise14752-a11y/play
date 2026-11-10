@@ -14,6 +14,10 @@ final class PlaybackController: ObservableObject {
     @Published private(set) var lyrics: [LyricLine] = []
     @Published private(set) var lyricsLoading = false
     @Published var error: String?
+    let haptics = MusicHaptics()
+    var interceptControl: ((String, Double?) -> Bool)?
+    var interceptSong: ((Song) -> Bool)?
+    var sharedSessionActive = false
     private let api: MusicAPI
     private let player = AVPlayer()
     private var timeObserver: Any?
@@ -25,6 +29,9 @@ final class PlaybackController: ObservableObject {
     private var lyricsTask: Task<Void, Never>?
     private var requestID = UUID()
     private var resumeAfterInterruption = false
+    private var resolving = false
+    private var pendingPosition = 0.0
+    private var pendingAutoplay = true
 
     init(api: MusicAPI) {
         self.api = api
@@ -38,6 +45,7 @@ final class PlaybackController: ObservableObject {
         statusObserver = player.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
             Task { @MainActor in
                 self?.isPlaying = player.timeControlStatus == .playing
+                self?.haptics.setPlayback(playing: player.timeControlStatus == .playing)
                 self?.loading = player.timeControlStatus == .waitingToPlayAtSpecifiedRate
                 self?.updateNowPlaying()
             }
@@ -45,6 +53,7 @@ final class PlaybackController: ObservableObject {
         notifications.append(NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: nil, queue: .main) { [weak self] note in
             Task { @MainActor in
                 guard let self = self, let item = note.object as? AVPlayerItem, item === self.player.currentItem else { return }
+                if self.interceptControl?("ended", nil) == true { return }
                 self.next()
             }
         })
@@ -78,12 +87,14 @@ final class PlaybackController: ObservableObject {
         for (command, token) in remoteTargets { command.removeTarget(token) }
     }
 
-    func play(_ song: Song, queue: [Song]) {
+    func play(_ song: Song, queue: [Song], startAt: Double = 0, autoplay: Bool = true) {
+        if interceptSong?(song) == true { return }
         loadTask?.cancel()
         lyricsTask?.cancel()
         requestID = UUID()
         let request = requestID
-        self.queue = queue.contains(where: { $0.id == song.id }) ? queue : [song]
+        let allowed = sharedSessionActive ? queue.filter { !$0.isLocal } : queue
+        self.queue = allowed.contains(where: { $0.id == song.id }) ? allowed : [song]
         current = song
         lyrics = []
         position = 0
@@ -91,6 +102,8 @@ final class PlaybackController: ObservableObject {
         error = nil
         player.pause()
         player.replaceCurrentItem(with: nil)
+        haptics.attach(to: nil)
+        resolving = true; pendingPosition = max(0, startAt); pendingAutoplay = autoplay
         loading = true
         lyricsLoading = true
         updateNowPlaying()
@@ -129,36 +142,71 @@ final class PlaybackController: ObservableObject {
                     }
                 }
                 self.player.replaceCurrentItem(with: item)
-                self.loading = false
-                self.player.play()
+                self.haptics.attach(to: item)
+                self.player.seek(to: CMTime(seconds: self.pendingPosition, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+                    Task { @MainActor in
+                        guard let self = self, self.requestID == request else { return }
+                        self.resolving = false; self.loading = false
+                        if self.pendingAutoplay { self.player.play() } else { self.player.pause() }
+                    }
+                }
             } catch {
                 guard !Task.isCancelled, self.requestID == request else { return }
                 self.error = error.localizedDescription
                 self.loading = false
+                self.resolving = false
             }
         }
     }
 
     func toggle() { isPlaying ? pause() : resume() }
-    func pause() { player.pause() }
+    func pause() {
+        if interceptControl?("pause", nil) == true { return }
+        pendingAutoplay = false; player.pause()
+    }
     func resume() {
+        if interceptControl?("play", nil) == true { return }
+        pendingAutoplay = true
         do { try AVAudioSession.sharedInstance().setActive(true); player.play() }
         catch { self.error = error.localizedDescription }
     }
     func seek(_ seconds: Double) {
         guard seconds.isFinite else { return }
+        if interceptControl?("seek_to", seconds) == true { return }
         position = max(0, min(seconds, duration > 0 ? duration : seconds))
+        pendingPosition = position
+        if resolving { return }
         player.seek(to: CMTime(seconds: position, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
         updateNowPlaying()
     }
     func next() {
+        if interceptControl?("skip_next", nil) == true { return }
         guard let id = current?.id, let index = queue.firstIndex(where: { $0.id == id }), queue.indices.contains(index + 1) else { pause(); return }
         play(queue[index + 1], queue: queue)
     }
     func previous() {
+        if interceptControl?("skip_previous", nil) == true { return }
         if position > 3 { seek(0); return }
         guard let id = current?.id, let index = queue.firstIndex(where: { $0.id == id }), index > 0 else { seek(0); return }
         play(queue[index - 1], queue: queue)
+    }
+
+    func enqueue(_ song: Song, next: Bool) {
+        guard !queue.contains(where: { $0.id == song.id }) else { return }
+        if current == nil { play(song, queue: [song]); return }
+        if next, let index = queue.firstIndex(where: { $0.id == current?.id }) { queue.insert(song, at: index + 1) }
+        else { queue.append(song) }
+    }
+
+    // Apply an authoritative room update without sending it back as a guest control.
+    func synchronize(queue: [Song], position: Double, playing: Bool) {
+        self.queue = queue
+        pendingPosition = max(0, position); pendingAutoplay = playing
+        guard !resolving else { return }
+        if abs(self.position - position) > 0.8 {
+            player.seek(to: CMTime(seconds: max(0, position), preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        }
+        if playing { player.play() } else { player.pause() }
     }
 
     private func configureRemoteCommands() {

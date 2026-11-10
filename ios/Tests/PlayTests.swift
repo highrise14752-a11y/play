@@ -3,6 +3,43 @@ import XCTest
 @testable import Play
 
 final class PlayTests: XCTestCase {
+    func testTogetherInvitationRoundTripAndInvalidSchemes() {
+        let invite = TogetherInvite(host: "192.168.1.20", port: 9090, sessionID: "room-1", key: "secret +&key")
+        XCTAssertEqual(TogetherInvite.parse(invite.link), invite)
+        XCTAssertEqual(TogetherInvite.parse(invite.link.replacingOccurrences(of: "play://", with: "velune://")), invite)
+        XCTAssertNil(TogetherInvite.parse("https://example.com/?sid=x&key=y"))
+        XCTAssertNil(TogetherInvite.parse("play://together?host=192.168.1.20&port=0&sid=x&key=y"))
+        XCTAssertNil(TogetherInvite.parse("play://together?host=192.168.1.20&port=80&sid=x"))
+        XCTAssertNil(TogetherInvite.parse("wss://example.com/together?sid=x&key=y"))
+    }
+
+    func testAndroidTogetherRoomDecodes() throws {
+        let json = #"{"sessionId":"room","hostId":"host","participants":[{"id":"host","name":"Android","isHost":true,"isPending":false,"isConnected":true}],"settings":{"allowGuestsToAddTracks":true,"allowGuestsToControlPlayback":false,"requireHostApprovalToJoin":false},"queue":[{"id":"song","title":"Song","artists":["Artist"],"durationSec":120}],"queueHash":"hash","currentIndex":0,"isPlaying":true,"positionMs":12000,"repeatMode":0,"shuffleEnabled":false,"sentAtElapsedRealtimeMs":12345}"#
+        let room = try JSONDecoder().decode(TogetherRoom.self, from: Data(json.utf8))
+        XCTAssertEqual(room.queue[0].song.id, "song")
+        XCTAssertEqual(room.queue[0].song.artist, "Artist")
+        XCTAssertEqual(room.positionMs, 12000)
+        XCTAssertFalse(room.settings.allowGuestsToControlPlayback)
+    }
+
+    func testHapticFrequencyFiltersAndSilence() {
+        func energy(_ frequency: Double, mode: HapticMode) -> Double {
+            var analyzer = HapticEnergy(mode: mode)
+            var sum = 0.0
+            for i in 0..<4410 {
+                let sample = Float(sin(2 * .pi * frequency * Double(i) / 44100) * 0.5)
+                let value = analyzer.sample(sample)
+                if i > 440 { sum += value }
+            }
+            return sum
+        }
+        XCTAssertGreaterThan(energy(90, mode: .bass), energy(4000, mode: .bass) * 5)
+        XCTAssertGreaterThan(energy(1200, mode: .vocals), energy(60, mode: .vocals) * 2)
+        var silence = HapticEnergy()
+        XCTAssertEqual(silence.sample(0), 0)
+        XCTAssertEqual(silence.sample(.nan), 0)
+    }
+
     func testLRCFractionsRepeatedTimestampsAndMetadata() {
         let lines = LyricsParser.parse("[ar:Artist]\n[00:01.50][00:03.005]Hello\n[00:02.7]World")
         XCTAssertEqual(lines.map(\.text), ["Hello", "World", "Hello"])

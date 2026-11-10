@@ -34,6 +34,10 @@ targets:
         UISupportsDocumentBrowser: false
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
+        NSLocalNetworkUsageDescription: Play connects to nearby Music Together sessions on your Wi-Fi network.
+        CFBundleURLTypes:
+          - CFBundleURLName: com.highrise14752.play.together
+            CFBundleURLSchemes: [play, velune]
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft
