@@ -1,6 +1,6 @@
 name: Build iOS
 
-# Requires the iOS port; the Android Gradle project cannot produce an IPA.
+# Native iOS app lives in ios/. Android remains a separate Gradle target.
 on:
   workflow_dispatch:
     inputs:
@@ -18,6 +18,7 @@ on:
     branches: [main]
     paths:
       - 'ios/**'
+      - '.github/workflows/build-ios.yml'
 
 permissions:
   contents: read
@@ -43,11 +44,27 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Generate native iOS project
+        run: |
+          set -euo pipefail
+          if ! command -v xcodegen >/dev/null; then brew install xcodegen; fi
+          xcodegen generate --spec ios/project.yml --project ios
+
+      - name: Run iOS unit tests
+        run: |
+          set -euo pipefail
+          device_id=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; data=json.load(sys.stdin); print(next(d["udid"] for devices in data["devices"].values() for d in devices if d["name"].startswith("iPhone")))')
+          xcodebuild -project ios/Play.xcodeproj -scheme Play \
+            -destination "platform=iOS Simulator,id=$device_id" \
+            -derivedDataPath "$RUNNER_TEMP/TestDerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/PlayTests.xcresult" \
+            CODE_SIGNING_ALLOWED=NO test
+
       - name: Validate iOS project
         run: |
           set -euo pipefail
           if [[ ! -d "$XCODE_PROJECT" ]]; then
-            echo "::error::Missing Xcode project: $XCODE_PROJECT. Play currently contains Android source only. Add the iOS port and a shared app scheme before building an IPA."
+            echo "::error::Missing Xcode project: $XCODE_PROJECT. Check the project input and generation step."
             exit 1
           fi
           case "$XCODE_PROJECT" in

@@ -35,6 +35,8 @@ The excluded `kizzy` and `lastfm` modules were also deleted from the source tree
 
 ## Build
 
+Android source stays in `app/` and the Gradle modules. The native iOS source, supported features, limitations, and build instructions are in [ios/README.md](ios/README.md). GitHub Actions provides separate **Build Android** (optimized APK) and **Build iOS** (unsigned IPA) workflows. The iOS workflow generates its Xcode project, runs simulator unit tests, and archives for iOS 15 and newer. iPhone installation requires signing, for example with AltStore. For Android CI updates, configure `ANDROID_DEBUG_KEYSTORE_BASE64` with the existing debug keystore; without it, each clean runner creates a temporary signing key. Do not commit signing keys to Git.
+
 Requires JDK 21, Android SDK 36, and Android Studio.
 
 ```sh

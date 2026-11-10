@@ -1,0 +1,76 @@
+// SPDX-License-Identifier: GPL-3.0-only
+import SwiftUI
+
+struct LyricsView: View {
+    @EnvironmentObject private var player: PlaybackController
+    @AppStorage("lyrics.style") private var style = "Apple Music"
+    @AppStorage("lyrics.position") private var position = "Center"
+    @AppStorage("lyrics.follow") private var autoFollow = true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var browsing = false
+    @State private var resumeTask: Task<Void, Never>?
+    private var active: Int? { LyricsParser.activeIndex(in: player.lyrics, at: player.position) }
+    private var alignment: Alignment { position == "Left" ? .leading : position == "Right" ? .trailing : .center }
+    private var textAlignment: TextAlignment { position == "Left" ? .leading : position == "Right" ? .trailing : .center }
+    private var animation: Animation? {
+        if reduceMotion || style == "None" { return nil }
+        return style == "Apple Music" ? .timingCurve(0.25, 0.1, 0.25, 1, duration: 0.55) : .easeInOut(duration: 0.35)
+    }
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            GeometryReader { geometry in
+                ZStack(alignment: .bottom) {
+                    if player.lyricsLoading { ProgressView("Loading lyrics…").frame(maxWidth: .infinity, maxHeight: .infinity) }
+                    else if player.lyrics.isEmpty {
+                        Text("Lyrics aren’t available for this song.").foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        ScrollView {
+                            LazyVStack(spacing: 22) {
+                                ForEach(player.lyrics) { line in
+                                    let highlighted = active == line.id
+                                    Text(line.text.isEmpty ? "♪" : line.text)
+                                        .font(.system(size: 28, weight: highlighted ? .bold : .semibold))
+                                        .multilineTextAlignment(textAlignment)
+                                        .frame(maxWidth: .infinity, alignment: alignment)
+                                        .opacity(line.time == nil || highlighted ? 1 : 0.45)
+                                        .scaleEffect(style == "Apple Music" && !highlighted ? 0.96 : 1, anchor: position == "Left" ? .leading : position == "Right" ? .trailing : .center)
+                                        .animation(animation, value: highlighted)
+                                        .contentShape(Rectangle())
+                                        .onTapGesture { if let time = line.time { browsing = false; player.seek(time) } }
+                                        .id(line.id)
+                                }
+                            }.padding(.horizontal, 24).padding(.vertical, geometry.size.height / 2)
+                        }
+                        .simultaneousGesture(DragGesture(minimumDistance: 8).onChanged { _ in
+                            resumeTask?.cancel(); browsing = true
+                        }.onEnded { _ in
+                            resumeTask?.cancel()
+                            resumeTask = Task {
+                                do { try await Task.sleep(nanoseconds: 3_000_000_000) }
+                                catch { return }
+                                browsing = false
+                            }
+                        })
+                        if browsing && autoFollow {
+                            Button("Resume following") { resumeTask?.cancel(); browsing = false }
+                                .buttonStyle(.borderedProminent).padding(.bottom, 8)
+                        }
+                    }
+                }
+            }
+            .onChange(of: active) { _ in follow(proxy) }
+            .onChange(of: browsing) { _ in follow(proxy) }
+            .onChange(of: autoFollow) { _ in follow(proxy) }
+            .onChange(of: position) { _ in follow(proxy) }
+            .task(id: player.lyrics) { await Task.yield(); follow(proxy) }
+            .onDisappear { resumeTask?.cancel() }
+        }
+    }
+
+    private func follow(_ proxy: ScrollViewProxy) {
+        guard autoFollow, !browsing, let active = active else { return }
+        withAnimation(animation) { proxy.scrollTo(active, anchor: .center) }
+    }
+}

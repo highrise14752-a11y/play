@@ -1,0 +1,60 @@
+name: Play
+options:
+  bundleIdPrefix: com.highrise14752
+  deploymentTarget:
+    iOS: '15.0'
+settings:
+  base:
+    SWIFT_VERSION: '5.0'
+    MARKETING_VERSION: '1.0.0'
+    CURRENT_PROJECT_VERSION: '1'
+    CODE_SIGNING_ALLOWED: 'NO'
+packages:
+  YouTubeKit:
+    url: https://github.com/alexeichhorn/YouTubeKit.git
+    revision: 7f75a2299dc329c0b7855afb25d47663a02855cb
+targets:
+  Play:
+    type: application
+    platform: iOS
+    sources: [Play]
+    dependencies:
+      - package: YouTubeKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.highrise14752.play
+        TARGETED_DEVICE_FAMILY: '1,2'
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    info:
+      path: Play/Info.plist
+      properties:
+        CFBundleDisplayName: Play
+        UILaunchScreen: {}
+        UIBackgroundModes: [audio]
+        UISupportsDocumentBrowser: false
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        'UISupportedInterfaceOrientations~ipad':
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+  PlayTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [Tests]
+    dependencies:
+      - target: Play
+schemes:
+  Play:
+    build:
+      targets:
+        Play: all
+    test:
+      targets: [PlayTests]
+    archive:
+      config: Release

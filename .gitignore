@@ -33,6 +33,9 @@ local.properties
 .idea/
 .DS_Store
 captures/
+ios/*.xcodeproj/
+ios/Play/Info.plist
+ios-artifacts/
 
 # --- CRITICAL SECURITY ---
 *.jks
