@@ -79,6 +79,23 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      - name: Export UI screenshots
+        if: always()
+        run: |
+          set -euo pipefail
+          if [[ -d "$RUNNER_TEMP/PlayTests.xcresult" ]]; then
+            xcrun xcresulttool export attachments --path "$RUNNER_TEMP/PlayTests.xcresult" --output-path "$RUNNER_TEMP/PlayScreenshots"
+          fi
+
+      - name: Upload UI screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Play-iOS-screenshots-${{ github.run_number }}
+          path: ${{ runner.temp }}/PlayScreenshots
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Validate iOS project
         run: |
           set -euo pipefail

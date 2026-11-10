@@ -7,8 +7,10 @@ final class LibraryStore: ObservableObject {
     @Published private(set) var songs: [Song] = []
     @Published private(set) var downloading = Set<String>()
     @Published var error: String?
+    @Published private(set) var measuredDurations: [String: Double] = [:]
     let api: MusicAPI
     let player: PlaybackController
+    let collections: UserCollections
     lazy var together = TogetherSession(player: player)
     static let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     static let downloads = documents.appendingPathComponent("Downloads", isDirectory: true)
@@ -20,9 +22,21 @@ final class LibraryStore: ObservableObject {
         let root = directory ?? Self.documents
         index = root.appendingPathComponent("library.json")
         downloadDirectory = root.appendingPathComponent("Downloads", isDirectory: true)
+        collections = UserCollections(directory: root)
         let api = MusicAPI()
         self.api = api
         self.player = PlaybackController(api: api)
+        player.onTrackStarted = { [weak collections] song in collections?.started(song) }
+        player.onListeningTime = { [weak collections] seconds in collections?.listened(seconds) }
+        player.onPaused = { [weak collections] in collections?.flush() }
+        player.onDurationKnown = { [weak self] song in
+            guard let self = self else { return }
+            if let duration = song.duration {
+                self.measuredDurations[song.id] = duration
+                if self.measuredDurations.count > 2000, let old = self.measuredDurations.keys.first(where: { $0 != song.id }) { self.measuredDurations[old] = nil }
+            }
+            if self.contains(song) { self.save(song) }
+        }
         do {
             try FileManager.default.createDirectory(at: downloadDirectory, withIntermediateDirectories: true)
             if FileManager.default.fileExists(atPath: index.path) {
@@ -35,7 +49,11 @@ final class LibraryStore: ObservableObject {
     }
 
     func contains(_ song: Song) -> Bool { songsByID[song.id] != nil }
-    func saved(_ song: Song) -> Song { songsByID[song.id] ?? song }
+    func saved(_ song: Song) -> Song {
+        var result = songsByID[song.id] ?? song
+        result.duration = measuredDurations[song.id] ?? result.duration
+        return result
+    }
     func save(_ song: Song) {
         if let i = songs.firstIndex(where: { $0.id == song.id }) {
             var updated = song
@@ -48,6 +66,19 @@ final class LibraryStore: ObservableObject {
 
     func play(_ song: Song, in queue: [Song]) {
         player.play(saved(song), queue: queue.map(saved))
+    }
+
+    func merge(_ incoming: [Song]) {
+        for var song in incoming.prefix(20000) {
+            if let name = song.localFile {
+                if let url = try? DownloadFile.url(filename: name, directory: downloadDirectory), FileManager.default.fileExists(atPath: url.path) { }
+                else { song.localFile = nil }
+            }
+            song.localFile = songsByID[song.id]?.localFile ?? song.localFile
+            songsByID[song.id] = song
+        }
+        songs = songsByID.values.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+        persist()
     }
 
     func download(_ song: Song) async {

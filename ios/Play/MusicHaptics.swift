@@ -3,8 +3,39 @@ import AVFoundation
 import CoreHaptics
 import MediaToolbox
 import UIKit
+import Darwin
 
 enum HapticMode: String, CaseIterable { case whole = "Whole song", bass = "Bass & beats", vocals = "Vocals emphasis" }
+
+enum HapticBackend: Equatable {
+    case coreHaptics, legacyImpact, unavailable
+    static func select(coreSupported: Bool, model: String) -> HapticBackend {
+        if coreSupported { return .coreHaptics }
+        // iPhone 7 / 7 Plus have UIKit feedback, but no Core Haptics support.
+        if ["iPhone9,1", "iPhone9,2", "iPhone9,3", "iPhone9,4"].contains(model) { return .legacyImpact }
+        return .unavailable
+    }
+}
+
+@MainActor
+private final class LegacyImpactOutput {
+    private var generator: UIImpactFeedbackGenerator?
+    private var enabled = false
+    private var generation = UUID()
+    func configure(enabled: Bool, generation: UUID) {
+        self.enabled = enabled; self.generation = generation
+        if enabled {
+            if generator == nil { generator = UIImpactFeedbackGenerator(style: .medium) }
+            generator?.prepare()
+        } else { generator = nil }
+    }
+    func emit(strength: Float, generation: UUID, emittedAt: Double) {
+        guard enabled, self.generation == generation,
+              ProcessInfo.processInfo.systemUptime - emittedAt < 0.2 else { return }
+        generator?.impactOccurred(intensity: CGFloat(strength))
+        generator?.prepare()
+    }
+}
 
 // All filter state belongs to one audio tap; analysis never changes the audio samples.
 struct HapticEnergy {
@@ -25,6 +56,8 @@ struct HapticEnergy {
 
 // Core Haptics operations run on this serial queue, never on the audio render thread.
 private final class HapticOutput {
+    private let backend: HapticBackend
+    private let legacy: LegacyImpactOutput?
     let queue = DispatchQueue(label: "Play.haptics", qos: .userInteractive)
     private var engine: CHHapticEngine?
     private var running = false
@@ -32,7 +65,14 @@ private final class HapticOutput {
     private var generation = UUID()
     private var intensity = 0.5
 
+    @MainActor init(backend: HapticBackend) {
+        self.backend = backend
+        legacy = backend == .legacyImpact ? LegacyImpactOutput() : nil
+    }
+
+    @MainActor
     func configure(enabled: Bool, intensity: Double, generation: UUID) {
+        legacy?.configure(enabled: enabled, generation: generation)
         queue.async { [self] in
             self.enabled = enabled
             self.intensity = min(1, max(0, intensity))
@@ -42,8 +82,15 @@ private final class HapticOutput {
     }
 
     func emit(_ energy: Double, generation: UUID) {
+        let emittedAt = ProcessInfo.processInfo.systemUptime
         queue.async { [self] in
             guard enabled, self.generation == generation, energy.isFinite, energy > 0.008 else { return }
+            let strength = Float(min(1, sqrt(energy) * 2.5) * intensity)
+            if backend == .legacyImpact {
+                Task { @MainActor [weak legacy] in legacy?.emit(strength: strength, generation: generation, emittedAt: emittedAt) }
+                return
+            }
+            guard backend == .coreHaptics else { return }
             do {
                 if engine == nil {
                     let created = try CHHapticEngine(audioSession: AVAudioSession.sharedInstance())
@@ -55,7 +102,6 @@ private final class HapticOutput {
                 }
                 guard let engine = engine else { return }
                 if !running { try engine.start(); running = true }
-                let strength = Float(min(1, sqrt(energy) * 2.5) * intensity)
                 let event = CHHapticEvent(eventType: .hapticTransient, parameters: [
                     CHHapticEventParameter(parameterID: .hapticIntensity, value: strength),
                     CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.35)
@@ -106,12 +152,14 @@ private final class AudioTapContext {
 
 @MainActor
 final class MusicHaptics: ObservableObject {
-    let supported = CHHapticEngine.capabilitiesForHardware().supportsHaptics
+    let backend: HapticBackend
+    var supported: Bool { backend != .unavailable }
+    var backendName: String { backend == .legacyImpact ? "Taptic Engine compatibility mode" : "Core Haptics" }
     @Published var enabled: Bool { didSet { UserDefaults.standard.set(enabled, forKey: "haptics.enabled"); refresh() } }
     @Published var intensity: Double { didSet { UserDefaults.standard.set(intensity, forKey: "haptics.intensity"); updateOutput() } }
     @Published var mode: String { didSet { UserDefaults.standard.set(mode, forKey: "haptics.mode"); refresh() } }
     @Published private(set) var status = "Off"
-    private let output = HapticOutput()
+    private let output: HapticOutput
     private weak var item: AVPlayerItem?
     private var generation = UUID()
     private var attachTask: Task<Void, Never>?
@@ -119,6 +167,11 @@ final class MusicHaptics: ObservableObject {
     private var visible = true
 
     init() {
+        var info = utsname()
+        uname(&info)
+        let model = withUnsafeBytes(of: &info.machine) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+        backend = HapticBackend.select(coreSupported: CHHapticEngine.capabilitiesForHardware().supportsHaptics, model: model)
+        output = HapticOutput(backend: backend)
         enabled = UserDefaults.standard.bool(forKey: "haptics.enabled")
         intensity = UserDefaults.standard.object(forKey: "haptics.intensity") as? Double ?? 0.5
         mode = UserDefaults.standard.string(forKey: "haptics.mode") ?? HapticMode.whole.rawValue
@@ -127,6 +180,15 @@ final class MusicHaptics: ObservableObject {
     func attach(to item: AVPlayerItem?) { self.item = item; refresh() }
     func setPlayback(playing: Bool) { self.playing = playing; updateOutput() }
     func setVisible(_ visible: Bool) { self.visible = visible; updateOutput() }
+    func testFeedback() {
+        guard supported && visible else { return }
+        let feedback = UIImpactFeedbackGenerator(style: .medium)
+        feedback.prepare()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            guard let self = self, self.visible else { return }
+            feedback.impactOccurred(intensity: CGFloat(self.intensity))
+        }
+    }
     private func updateOutput() { output.configure(enabled: supported && enabled && playing && visible, intensity: intensity, generation: generation) }
     private func refresh() {
         attachTask?.cancel()
@@ -166,7 +228,7 @@ final class MusicHaptics: ObservableObject {
                 let mix = AVMutableAudioMix()
                 mix.inputParameters = [parameters]
                 item.audioMix = mix
-                status = "Audio-driven haptics • active while Play is onscreen"
+                status = "\(backendName) • active while Play is onscreen"
             } catch { if !Task.isCancelled { status = "Audio analysis unavailable: \(error.localizedDescription)" } }
         }
     }

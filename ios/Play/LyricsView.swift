@@ -6,6 +6,8 @@ struct LyricsView: View {
     @AppStorage("lyrics.style") private var style = "Apple Music"
     @AppStorage("lyrics.position") private var position = "Center"
     @AppStorage("lyrics.follow") private var autoFollow = true
+    @AppStorage("lyrics.click") private var clickToSeek = true
+    @AppStorage("lyrics.size") private var textSize = 28.0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var browsing = false
     @State private var resumeTask: Task<Void, Never>?
@@ -31,14 +33,27 @@ struct LyricsView: View {
                                 ForEach(player.lyrics) { line in
                                     let highlighted = active == line.id
                                     Text(line.text.isEmpty ? "♪" : line.text)
-                                        .font(.system(size: 28, weight: highlighted ? .bold : .semibold))
+                                        .font(PlayTheme.font(CGFloat(textSize), weight: highlighted ? .bold : .semibold))
                                         .multilineTextAlignment(textAlignment)
                                         .frame(maxWidth: .infinity, alignment: alignment)
                                         .opacity(line.time == nil || highlighted ? 1 : 0.45)
                                         .scaleEffect(style == "Apple Music" && !highlighted ? 0.96 : 1, anchor: position == "Left" ? .leading : position == "Right" ? .trailing : .center)
                                         .animation(animation, value: highlighted)
+                                        .shadow(color: style == "Glow" && highlighted ? PlayTheme.accent.opacity(0.7) : .clear, radius: 9)
+                                        .offset(x: style == "Slide" && !highlighted ? -10 : 0)
+                                        .overlay {
+                                            if style == "Karaoke", highlighted {
+                                                GeometryReader { measured in
+                                                    Text(line.text).font(PlayTheme.font(CGFloat(textSize), weight: .bold))
+                                                        .multilineTextAlignment(textAlignment)
+                                                        .frame(maxWidth: .infinity, alignment: alignment)
+                                                        .foregroundColor(PlayTheme.accent)
+                                                        .mask(alignment: .leading) { Rectangle().frame(width: measured.size.width * CGFloat(progress(line))) }
+                                                }.allowsHitTesting(false)
+                                            }
+                                        }
                                         .contentShape(Rectangle())
-                                        .onTapGesture { if let time = line.time { browsing = false; player.seek(time) } }
+                                        .onTapGesture { if clickToSeek, let time = line.time { browsing = false; player.seek(time) } }
                                         .id(line.id)
                                 }
                             }.padding(.horizontal, 24).padding(.vertical, geometry.size.height / 2)
@@ -72,5 +87,11 @@ struct LyricsView: View {
     private func follow(_ proxy: ScrollViewProxy) {
         guard autoFollow, !browsing, let active = active else { return }
         withAnimation(animation) { proxy.scrollTo(active, anchor: .center) }
+    }
+    private func progress(_ line: LyricLine) -> Double {
+        guard let start = line.time, let index = player.lyrics.firstIndex(where: { $0.id == line.id }) else { return 0 }
+        let end = player.lyrics.dropFirst(index + 1).compactMap(\.time).first ?? player.duration
+        guard end > start else { return 1 }
+        return min(1, max(0, (player.position - start) / (end - start)))
     }
 }

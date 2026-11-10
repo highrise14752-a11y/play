@@ -7,6 +7,9 @@ struct Song: Identifiable, Codable, Equatable {
     var artist: String
     var artwork: URL?
     var duration: Double?
+    var album: String?
+    var albumID: String?
+    var artistID: String?
     // A relative filename, never an expiring stream URL or absolute sandbox path.
     var localFile: String?
     var isLocal: Bool { id.hasPrefix("local:") }

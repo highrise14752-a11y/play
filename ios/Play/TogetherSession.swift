@@ -118,6 +118,7 @@ final class TogetherSession: ObservableObject {
         self.player = player
         player.interceptControl = { [weak self] action, value in self?.requestControl(action, value: value) ?? false }
         player.interceptSong = { [weak self] song in self?.requestSong(song) ?? false }
+        player.interceptEnqueue = { [weak self] song, next in self?.requestSong(song, next: next) ?? false }
     }
 
     func host(name: String, addressOverride: String? = nil) {
@@ -327,7 +328,8 @@ final class TogetherSession: ObservableObject {
         let room = TogetherRoom(sessionId: sessionID, hostId: participantID, participants: participants,
                                 settings: TogetherSettings(allowGuestsToControlPlayback: allowGuestControls), queue: songs.map(TogetherTrack.init), queueHash: hash,
                                 currentIndex: songs.firstIndex { $0.id == player.current?.id } ?? 0,
-                                isPlaying: player.isPlaying, positionMs: Int(player.position * 1000), sentAtElapsedRealtimeMs: Self.now())
+                                isPlaying: player.isPlaying, positionMs: Int(player.position * 1000), repeatMode: player.repeatMode.rawValue,
+                                shuffleEnabled: player.shuffleEnabled, sentAtElapsedRealtimeMs: Self.now())
         struct Envelope: Encodable { let type = "room_state"; let state: TogetherRoom }
         guard let data = try? JSONEncoder().encode(Envelope(state: room)) else { return }
         guard data.count <= 262144 else { error = "The shared queue contains too much metadata."; return }
@@ -340,6 +342,7 @@ final class TogetherSession: ObservableObject {
         }
     }
     private func apply(_ room: TogetherRoom) {
+        player.applyRoomModes(repeatMode: room.repeatMode, shuffle: room.shuffleEnabled)
         guard room.queue.indices.contains(room.currentIndex) else {
             applying = true; player.pause(); applying = false; return
         }
@@ -359,20 +362,33 @@ final class TogetherSession: ObservableObject {
     private func requestControl(_ action: String, value: Double?) -> Bool {
         guard connected && !isHost && !applying else { return false }
         if action == "ended" { return true }
+        if action == "edit_queue" { player.error = "Only the host can reorder or remove queued songs."; return true }
         guard guestControlsAllowed else { player.error = "The host controls playback in this session."; return true }
         guard let connection = peers.values.first else { return true }
         var control: [String: Any] = ["type": action]
-        if let value = value { control["positionMs"] = Int(value * 1000) }
+        if let value = value {
+            switch action {
+            case "set_repeat_mode": control["repeatMode"] = Int(value)
+            case "set_shuffle_enabled": control["enabled"] = value != 0
+            default: control["positionMs"] = Int(value * 1000)
+            }
+        }
         send(["type": "control_request", "sessionId": sessionID, "participantId": participantID, "action": control], to: connection)
         return true
     }
-    private func requestSong(_ song: Song) -> Bool {
+    private func requestSong(_ song: Song, next: Bool = false) -> Bool {
         guard connected && !applying else { return false }
         if song.isLocal { player.error = "Local files cannot be shared in Music Together."; return true }
         guard !isHost, let connection = peers.values.first else { return false }
+        if player.queue.contains(where: { $0.id == song.id }) {
+            guard guestControlsAllowed else { player.error = "The host controls playback in this session."; return true }
+            send(["type": "control_request", "sessionId": sessionID, "participantId": participantID,
+                  "action": ["type": "seek_to_track", "trackId": song.id, "positionMs": 0]], to: connection)
+            return true
+        }
         guard guestAddsAllowed else { player.error = "The host has disabled guest queue requests."; return true }
         guard let data = try? JSONEncoder().encode(TogetherTrack(song)), let track = try? JSONSerialization.jsonObject(with: data) else { return true }
-        send(["type": "add_track_request", "sessionId": sessionID, "participantId": participantID, "track": track, "mode": "ADD_TO_QUEUE"], to: connection)
+        send(["type": "add_track_request", "sessionId": sessionID, "participantId": participantID, "track": track, "mode": next ? "PLAY_NEXT" : "ADD_TO_QUEUE"], to: connection)
         status = "Track requested from host"
         return true
     }
@@ -383,6 +399,12 @@ final class TogetherSession: ObservableObject {
         case "seek_to": player.seek(Double(action["positionMs"] as? Int ?? 0) / 1000)
         case "skip_next": player.next()
         case "skip_previous": player.previous()
+        case "set_repeat_mode": player.setRepeat(PlayRepeatMode(rawValue: action["repeatMode"] as? Int ?? 0) ?? .off)
+        case "set_shuffle_enabled": player.setShuffle(action["enabled"] as? Bool ?? false)
+        case "seek_to_track":
+            if let song = player.queue.first(where: { $0.id == action["trackId"] as? String }) {
+                player.play(song, queue: player.queue, startAt: Double(action["positionMs"] as? Int ?? 0) / 1000)
+            }
         default: break
         }
     }

@@ -11,7 +11,9 @@ struct PlayApp: App {
                 .environmentObject(library.player)
                 .environmentObject(library.together)
                 .environmentObject(library.player.haptics)
-                .tint(.cyan)
+                .environmentObject(library.collections)
+                .tint(PlayTheme.accent)
+                .font(.custom("Poppins-Regular", size: 15))
                 .preferredColorScheme(.dark)
         }
     }

@@ -6,8 +6,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: '5.0'
-    MARKETING_VERSION: '1.0.0'
-    CURRENT_PROJECT_VERSION: '1'
+    MARKETING_VERSION: '1.1.0'
+    CURRENT_PROJECT_VERSION: '2'
     CODE_SIGNING_ALLOWED: 'NO'
 packages:
   YouTubeKit:
@@ -29,6 +29,7 @@ targets:
       path: Play/Info.plist
       properties:
         CFBundleDisplayName: Play
+        UIAppFonts: [Poppins.ttf]
         UILaunchScreen: {}
         UIBackgroundModes: [audio]
         UISupportsDocumentBrowser: false

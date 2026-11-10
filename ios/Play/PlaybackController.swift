@@ -3,6 +3,8 @@ import AVFoundation
 import MediaPlayer
 import Foundation
 
+enum PlayRepeatMode: Int, CaseIterable { case off = 0, one = 1, all = 2 }
+
 @MainActor
 final class PlaybackController: ObservableObject {
     @Published private(set) var current: Song?
@@ -14,9 +16,18 @@ final class PlaybackController: ObservableObject {
     @Published private(set) var lyrics: [LyricLine] = []
     @Published private(set) var lyricsLoading = false
     @Published var error: String?
+    @Published private(set) var repeatMode = PlayRepeatMode.off
+    @Published private(set) var shuffleEnabled = false
+    @Published private(set) var sleepDeadline: Date?
+    @Published private(set) var stopAtTrackEnd = false
+    var onTrackStarted: ((Song) -> Void)?
+    var onListeningTime: ((Double) -> Void)?
+    var onPaused: (() -> Void)?
+    var onDurationKnown: ((Song) -> Void)?
     let haptics = MusicHaptics()
     var interceptControl: ((String, Double?) -> Bool)?
     var interceptSong: ((Song) -> Bool)?
+    var interceptEnqueue: ((Song, Bool) -> Bool)?
     var sharedSessionActive = false
     private let api: MusicAPI
     private let player = AVPlayer()
@@ -33,6 +44,10 @@ final class PlaybackController: ObservableObject {
     private var pendingPosition = 0.0
     private var pendingAutoplay = true
     private(set) var isLocallySuspended = false
+    private var loggedRequest: UUID?
+    private var lastPosition = 0.0
+    private var sleepTask: Task<Void, Never>?
+    private var playedHistory: [Song] = []
 
     init(api: MusicAPI) {
         self.api = api
@@ -40,9 +55,12 @@ final class PlaybackController: ObservableObject {
             Task { @MainActor in
                 guard let self = self else { return }
                 let seconds = time.seconds
+                let delta = seconds - self.lastPosition
+                if self.isPlaying && delta > 0 && delta < 2 { self.onListeningTime?(delta) }
+                self.lastPosition = seconds.isFinite ? seconds : 0
                 if seconds.isFinite && self.position != max(0, seconds) { self.position = max(0, seconds) }
                 let length = self.player.currentItem?.duration.seconds ?? 0
-                if length.isFinite && self.duration != max(0, length) { self.duration = max(0, length) }
+                if length.isFinite && length > 0 && abs(self.duration - length) > 0.01 { self.updateDuration(length) }
             }
         }
         statusObserver = player.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
@@ -51,12 +69,21 @@ final class PlaybackController: ObservableObject {
                 self?.haptics.setPlayback(playing: player.timeControlStatus == .playing)
                 self?.loading = player.timeControlStatus == .waitingToPlayAtSpecifiedRate
                 self?.updateNowPlaying()
+                if let self = self {
+                    if self.isPlaying, self.loggedRequest != self.requestID, let song = self.current {
+                        self.loggedRequest = self.requestID; self.onTrackStarted?(song)
+                    } else if player.timeControlStatus == .paused { self.onPaused?() }
+                }
             }
         }
         notifications.append(NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: nil, queue: .main) { [weak self] note in
             Task { @MainActor in
                 guard let self = self, let item = note.object as? AVPlayerItem, item === self.player.currentItem else { return }
                 if self.interceptControl?("ended", nil) == true { return }
+                if self.stopAtTrackEnd { self.stopAtTrackEnd = false; self.suspendForSystemEvent(); return }
+                if self.repeatMode == .one {
+                    self.seek(0); if let song = self.current { self.onTrackStarted?(song) }; self.resume(); return
+                }
                 self.next()
             }
         })
@@ -86,13 +113,18 @@ final class PlaybackController: ObservableObject {
     deinit {
         loadTask?.cancel()
         lyricsTask?.cancel()
+        sleepTask?.cancel()
         if let token = timeObserver { player.removeTimeObserver(token) }
         notifications.forEach(NotificationCenter.default.removeObserver)
         for (command, token) in remoteTargets { command.removeTarget(token) }
     }
 
-    func play(_ song: Song, queue: [Song], startAt: Double = 0, autoplay: Bool = true, preserveLocalSuspension: Bool = false) {
+    func play(_ song: Song, queue: [Song], startAt: Double = 0, autoplay: Bool = true, preserveLocalSuspension: Bool = false, rememberPrevious: Bool = true) {
         if interceptSong?(song) == true { return }
+        if rememberPrevious, let old = current, old.id != song.id {
+            playedHistory.append(old)
+            if playedHistory.count > 100 { playedHistory.removeFirst() }
+        }
         if !preserveLocalSuspension { isLocallySuspended = false }
         loadTask?.cancel()
         lyricsTask?.cancel()
@@ -103,6 +135,7 @@ final class PlaybackController: ObservableObject {
         current = song
         lyrics = []
         position = 0
+        lastPosition = 0
         duration = song.duration ?? 0
         error = nil
         player.pause()
@@ -139,7 +172,11 @@ final class PlaybackController: ObservableObject {
                 let audio = AVAudioSession.sharedInstance()
                 try audio.setCategory(.playback, mode: .default)
                 try audio.setActive(true)
-                let item = AVPlayerItem(url: url)
+                let asset = AVURLAsset(url: url)
+                let measured = try? await asset.load(.duration).seconds
+                guard !Task.isCancelled, self.requestID == request else { return }
+                if let measured = measured, measured.isFinite, measured > 0 { self.updateDuration(measured) }
+                let item = AVPlayerItem(asset: asset)
                 self.itemObserver = item.observe(\.status, options: [.new]) { [weak self] item, _ in
                     Task { @MainActor in
                         guard let self = self, self.requestID == request else { return }
@@ -169,6 +206,16 @@ final class PlaybackController: ObservableObject {
     }
 
     func toggle() { isPlaying ? pause() : resume() }
+    private func updateDuration(_ value: Double) {
+        guard value.isFinite && value > 0 else { return }
+        duration = value
+        if var song = current {
+            song.duration = value; current = song
+            if let index = queue.firstIndex(where: { $0.id == song.id }) { queue[index].duration = value }
+            onDurationKnown?(song)
+        }
+        updateNowPlaying()
+    }
     func pause() {
         if interceptControl?("pause", nil) == true { return }
         pendingAutoplay = false; player.pause()
@@ -198,22 +245,63 @@ final class PlaybackController: ObservableObject {
     }
     func next() {
         if interceptControl?("skip_next", nil) == true { return }
+        if shuffleEnabled, let random = queue.filter({ $0.id != current?.id }).randomElement() { play(random, queue: queue); return }
+        if let id = current?.id, queue.last?.id == id, repeatMode == .all, let first = queue.first { play(first, queue: queue); return }
         guard let id = current?.id, let index = queue.firstIndex(where: { $0.id == id }), queue.indices.contains(index + 1) else { pause(); return }
         play(queue[index + 1], queue: queue)
     }
     func previous() {
         if interceptControl?("skip_previous", nil) == true { return }
         if position > 3 { seek(0); return }
+        if let previous = playedHistory.popLast() { play(previous, queue: queue, rememberPrevious: false); return }
         guard let id = current?.id, let index = queue.firstIndex(where: { $0.id == id }), index > 0 else { seek(0); return }
         play(queue[index - 1], queue: queue)
     }
 
     func enqueue(_ song: Song, next: Bool) {
+        if interceptEnqueue?(song, next) == true { return }
         guard !queue.contains(where: { $0.id == song.id }) else { return }
         if current == nil { play(song, queue: [song]); return }
         if next, let index = queue.firstIndex(where: { $0.id == current?.id }) { queue.insert(song, at: index + 1) }
         else { queue.append(song) }
     }
+
+    func setRepeat(_ mode: PlayRepeatMode) {
+        if interceptControl?("set_repeat_mode", Double(mode.rawValue)) == true { return }
+        repeatMode = mode
+    }
+    func setShuffle(_ enabled: Bool) {
+        if interceptControl?("set_shuffle_enabled", enabled ? 1 : 0) == true { return }
+        shuffleEnabled = enabled
+    }
+    func applyRoomModes(repeatMode: Int, shuffle: Bool) {
+        self.repeatMode = PlayRepeatMode(rawValue: repeatMode) ?? .off; self.shuffleEnabled = shuffle
+    }
+    func removeQueue(at offsets: IndexSet) {
+        guard interceptControl?("edit_queue", nil) != true else { return }
+        let active = current?.id
+        queue = queue.enumerated().filter { !offsets.contains($0.offset) || $0.element.id == active }.map(\.element)
+    }
+    func moveQueue(from: IndexSet, to: Int) {
+        guard interceptControl?("edit_queue", nil) != true else { return }
+        var updated = queue
+        let selected = from.sorted().map { updated[$0] }
+        let insertion = to - from.filter { $0 < to }.count
+        updated = updated.enumerated().filter { !from.contains($0.offset) }.map(\.element)
+        updated.insert(contentsOf: selected, at: max(0, min(updated.count, insertion)))
+        queue = updated
+    }
+    func setSleepTimer(minutes: Double?) {
+        sleepTask?.cancel(); sleepDeadline = nil; stopAtTrackEnd = false
+        guard let minutes = minutes, minutes.isFinite, minutes > 0 else { return }
+        let seconds = min(minutes, 1440) * 60
+        sleepDeadline = Date().addingTimeInterval(seconds)
+        sleepTask = Task { [weak self] in
+            do { try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000)) } catch { return }
+            self?.sleepDeadline = nil; self?.suspendForSystemEvent()
+        }
+    }
+    func sleepAfterCurrentSong() { setSleepTimer(minutes: nil); stopAtTrackEnd = true }
 
     // Apply an authoritative room update without sending it back as a guest control.
     func synchronize(queue: [Song], position: Double, playing: Bool) {

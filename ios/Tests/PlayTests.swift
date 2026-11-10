@@ -1,8 +1,78 @@
 // SPDX-License-Identifier: GPL-3.0-only
 import XCTest
+import AVFoundation
+import UIKit
 @testable import Play
 
 final class PlayTests: XCTestCase {
+    func testTrackTimeFormatsMeasuredAudioAndLongSongs() {
+        XCTAssertEqual(TrackTime.text(nil), "—")
+        XCTAssertEqual(TrackTime.text(.nan), "—")
+        XCTAssertEqual(TrackTime.text(185.97), "3:06")
+        XCTAssertEqual(TrackTime.text(185.97, elapsed: true), "3:05")
+        XCTAssertEqual(TrackTime.text(3723), "1:02:03")
+    }
+
+    func testActualAudioAssetDuration() async throws {
+        var data = Data()
+        func text(_ value: String) { data.append(contentsOf: value.utf8) }
+        func number<T: FixedWidthInteger>(_ value: T) { var little = value.littleEndian; withUnsafeBytes(of: &little) { data.append(contentsOf: $0) } }
+        text("RIFF"); number(UInt32(20036)); text("WAVEfmt "); number(UInt32(16)); number(UInt16(1)); number(UInt16(1))
+        number(UInt32(8000)); number(UInt32(16000)); number(UInt16(2)); number(UInt16(16)); text("data"); number(UInt32(20000))
+        data.append(Data(repeating: 0, count: 20000))
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try data.write(to: url)
+        let measured = try await AVURLAsset(url: url).load(.duration).seconds
+        XCTAssertEqual(measured, 1.25, accuracy: 0.001)
+    }
+
+    @MainActor func testPlaylistLikesHistoryAndBackupPersistence() async throws {
+        let previous = UserDefaults.standard.object(forKey: "privacy.pauseHistory")
+        UserDefaults.standard.set(false, forKey: "privacy.pauseHistory")
+        defer { UserDefaults.standard.set(previous, forKey: "privacy.pauseHistory") }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let collections = UserCollections(directory: root)
+        let song = Song(id: "khnokW3Mw24", title: "Song", artist: "Artist")
+        collections.createPlaylist("Favorites")
+        let id = try XCTUnwrap(collections.state.playlists.first?.id)
+        collections.add(song, to: id); collections.add(song, to: id)
+        XCTAssertEqual(collections.state.playlists[0].songIDs, [song.id])
+        collections.toggleLike(song); XCTAssertTrue(collections.liked(song))
+        collections.started(song); collections.listened(0.5); collections.flush()
+        XCTAssertEqual(collections.state.totals[song.id]?.plays, 1)
+        XCTAssertEqual(collections.state.totals[song.id]?.seconds, 0.5)
+        let restored = UserCollections(directory: root)
+        XCTAssertTrue(restored.liked(song)); XCTAssertEqual(restored.state.history.count, 1)
+        restored.restore(collections.state)
+        XCTAssertEqual(restored.state.playlists.count, 1); XCTAssertEqual(restored.state.history.count, 1)
+        let backup = PlayBackup(songs: [song], collections: collections.state)
+        let decoded = try JSONDecoder().decode(PlayBackup.self, from: JSONEncoder().encode(backup))
+        XCTAssertEqual(decoded.songs[0].id, song.id)
+    }
+
+    @MainActor func testRepeatShuffleSleepAndFont() async throws {
+        let player = PlaybackController(api: MusicAPI())
+        player.setRepeat(.all); player.setShuffle(true)
+        XCTAssertEqual(player.repeatMode, .all); XCTAssertTrue(player.shuffleEnabled)
+        player.setSleepTimer(minutes: 0.001)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertNil(player.sleepDeadline); XCTAssertTrue(player.isLocallySuspended)
+        player.sleepAfterCurrentSong(); XCTAssertTrue(player.stopAtTrackEnd)
+        player.setSleepTimer(minutes: nil); XCTAssertFalse(player.stopAtTrackEnd)
+        XCTAssertNotNil(UIFont(name: "Poppins-Regular", size: 15))
+    }
+
+    func testIPhone7UsesLegacyHapticsWithoutEnablingUnsupportedDevices() {
+        for model in ["iPhone9,1", "iPhone9,2", "iPhone9,3", "iPhone9,4"] {
+            XCTAssertEqual(HapticBackend.select(coreSupported: false, model: model), .legacyImpact)
+        }
+        XCTAssertEqual(HapticBackend.select(coreSupported: true, model: "iPhone10,1"), .coreHaptics)
+        XCTAssertEqual(HapticBackend.select(coreSupported: false, model: "iPad7,1"), .unavailable)
+        XCTAssertEqual(HapticBackend.select(coreSupported: false, model: "iPhone8,4"), .unavailable)
+        XCTAssertEqual(HapticBackend.select(coreSupported: false, model: "arm64"), .unavailable)
+    }
     @MainActor func testSystemPauseBypassesGuestControlsAndSurvivesSynchronization() async {
         let player = PlaybackController(api: MusicAPI())
         var controls: [String] = []

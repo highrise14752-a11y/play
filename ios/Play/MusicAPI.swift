@@ -11,7 +11,24 @@ actor MusicAPI {
     }()
 
     func search(_ query: String) async throws -> [Song] {
-        var request = URLRequest(url: URL(string: "https://music.youtube.com/youtubei/v1/search?prettyPrint=false")!)
+        return Self.parseSearch(try await musicRequest("search", parameters: ["query": query, "params": "EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D"]))
+    }
+
+    func home(category: String? = nil) async throws -> [Song] {
+        if let category = category { return try await search(category + " music") }
+        let songs = Self.parseSearch(try await musicRequest("browse", parameters: ["browseId": "FEmusic_home"]))
+        if songs.isEmpty { return try await search("popular music") }
+        return songs
+    }
+
+    func related(to song: Song) async throws -> [Song] {
+        let songs = Self.parseSearch(try await musicRequest("next", parameters: ["videoId": song.id, "isAudioOnly": true]))
+        if !songs.isEmpty { return songs.filter { $0.id != song.id } }
+        return try await search(song.artist).filter { $0.id != song.id }
+    }
+
+    private func musicRequest(_ endpoint: String, parameters: [String: Any]) async throws -> Any {
+        var request = URLRequest(url: URL(string: "https://music.youtube.com/youtubei/v1/\(endpoint)?prettyPrint=false")!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("https://music.youtube.com", forHTTPHeaderField: "Origin")
@@ -19,14 +36,14 @@ actor MusicAPI {
         request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
         request.setValue("67", forHTTPHeaderField: "X-YouTube-Client-Name")
         request.setValue("1.20260114.01.00", forHTTPHeaderField: "X-YouTube-Client-Version")
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "context": ["client": ["clientName": "WEB_REMIX", "clientVersion": "1.20260114.01.00", "hl": "en", "gl": "US"]],
-            "query": query,
-            "params": "EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D"
-        ])
+        var body = parameters
+        body["context"] = ["client": ["clientName": "WEB_REMIX", "clientVersion": "1.20260114.01.00",
+                                     "hl": UserDefaults.standard.string(forKey: "content.language") ?? "en",
+                                     "gl": UserDefaults.standard.string(forKey: "content.region") ?? "US"]]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, response) = try await session.data(for: request)
         try check(response)
-        return Self.parseSearch(try JSONSerialization.jsonObject(with: data))
+        return try JSONSerialization.jsonObject(with: data)
     }
 
     // Parse only song rows, avoiding duplicate thumbnail/navigation video IDs.
@@ -35,6 +52,24 @@ actor MusicAPI {
         var seen = Set<String>()
         func visit(_ value: Any) {
             if let dictionary = value as? [String: Any] {
+                if let row = dictionary["musicTwoRowItemRenderer"] as? [String: Any],
+                   let endpoint = row["navigationEndpoint"] as? [String: Any],
+                   let watch = endpoint["watchEndpoint"] as? [String: Any], let id = watch["videoId"] as? String {
+                    let title = row["title"] as? [String: Any]
+                    let subtitle = row["subtitle"] as? [String: Any]
+                    let titleRuns = title?["runs"] as? [[String: Any]] ?? []
+                    let artistRuns = subtitle?["runs"] as? [[String: Any]] ?? []
+                    let thumbnail = row["thumbnailRenderer"] as? [String: Any]
+                    let renderer = thumbnail?["musicThumbnailRenderer"] as? [String: Any]
+                    let image = renderer?["thumbnail"] as? [String: Any]
+                    let images = image?["thumbnails"] as? [[String: Any]] ?? []
+                    let name = titleRuns.compactMap { $0["text"] as? String }.joined()
+                    if !name.isEmpty, seen.insert(id).inserted {
+                        songs.append(Song(id: id, title: name, artist: artistRuns.first?["text"] as? String ?? "Unknown artist",
+                                          artwork: (images.last?["url"] as? String).flatMap(URL.init(string:))))
+                    }
+                    return
+                }
                 if let row = dictionary["musicResponsiveListItemRenderer"] as? [String: Any] {
                     let endpoint = row["navigationEndpoint"] as? [String: Any]
                     let watch = endpoint?["watchEndpoint"] as? [String: Any]
@@ -57,9 +92,26 @@ actor MusicAPI {
                     let image = renderer?["thumbnail"] as? [String: Any]
                     let thumbnails = image?["thumbnails"] as? [[String: Any]]
                     let duration = runs(1).compactMap { ($0["text"] as? String).flatMap(Self.duration) }.last
+                    let fixed = row["fixedColumns"] as? [[String: Any]] ?? []
+                    let fixedDuration = fixed.compactMap { column -> Double? in
+                        let renderer = column["musicResponsiveListItemFixedColumnRenderer"] as? [String: Any]
+                        let text = renderer?["text"] as? [String: Any]
+                        let runs = text?["runs"] as? [[String: Any]] ?? []
+                        return runs.compactMap { ($0["text"] as? String).flatMap(Self.duration) }.first
+                    }.first
+                    let albumRun = runs(1).first { run in
+                        let nav = run["navigationEndpoint"] as? [String: Any]
+                        let browse = nav?["browseEndpoint"] as? [String: Any]
+                        return (browse?["browseId"] as? String)?.hasPrefix("MPRE") == true
+                    }
+                    func browseID(_ run: [String: Any]?) -> String? {
+                        let nav = run?["navigationEndpoint"] as? [String: Any]
+                        return (nav?["browseEndpoint"] as? [String: Any])?["browseId"] as? String
+                    }
                     if let id = id, !title.isEmpty, seen.insert(id).inserted {
                         songs.append(Song(id: id, title: title, artist: artist,
-                                          artwork: (thumbnails?.last?["url"] as? String).flatMap(URL.init(string:)), duration: duration))
+                                          artwork: (thumbnails?.last?["url"] as? String).flatMap(URL.init(string:)), duration: fixedDuration ?? duration,
+                                          album: albumRun?["text"] as? String, albumID: browseID(albumRun), artistID: browseID(runs(1).first)))
                     }
                     return
                 }
