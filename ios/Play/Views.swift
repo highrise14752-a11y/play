@@ -5,7 +5,6 @@ import UIKit
 
 struct RootView: View {
     @EnvironmentObject private var library: LibraryStore
-    @EnvironmentObject private var player: PlaybackController
     @EnvironmentObject private var together: TogetherSession
     @EnvironmentObject private var haptics: MusicHaptics
     @Environment(\.scenePhase) private var scenePhase
@@ -21,27 +20,7 @@ struct RootView: View {
                 .tabItem { Label("Settings", systemImage: "gearshape") }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            if let song = player.current {
-                HStack {
-                    Button { showingPlayer = true } label: {
-                        HStack {
-                            Artwork(url: song.artwork).frame(width: 44, height: 44).cornerRadius(8)
-                            VStack(alignment: .leading) {
-                                Text(song.title).font(.subheadline.bold()).lineLimit(1)
-                                Text(song.artist).font(.caption).foregroundColor(.secondary).lineLimit(1)
-                            }
-                            Spacer()
-                        }
-                    }.buttonStyle(.plain)
-                    if player.loading { ProgressView() }
-                    Button(action: player.toggle) {
-                        Image(systemName: player.isPlaying ? "pause.fill" : "play.fill").frame(width: 44, height: 44)
-                    }.accessibilityLabel(player.isPlaying ? "Pause" : "Play")
-                    Button(action: player.next) { Image(systemName: "forward.end.fill").frame(width: 40, height: 44) }
-                        .accessibilityLabel("Next song")
-                }
-                .padding(.horizontal).padding(.vertical, 8).background(.regularMaterial)
-            }
+            MiniPlayerView(showingPlayer: $showingPlayer)
         }
         .sheet(isPresented: $showingPlayer) {
             NavigationView { PlayerView() }.navigationViewStyle(.stack)
@@ -51,6 +30,35 @@ struct RootView: View {
         .alert("Play", isPresented: Binding(get: { library.error != nil }, set: { if !$0 { library.error = nil } })) {
             Button("OK") { library.error = nil }
         } message: { Text(library.error ?? "") }
+    }
+}
+
+// Playback ticks update this bar, rather than rebuilding the tab/list container.
+struct MiniPlayerView: View {
+    @EnvironmentObject private var player: PlaybackController
+    @Binding var showingPlayer: Bool
+    var body: some View {
+        if let song = player.current {
+            HStack {
+                Button { showingPlayer = true } label: {
+                    HStack {
+                        Artwork(url: song.artwork).frame(width: 44, height: 44).cornerRadius(8)
+                        VStack(alignment: .leading) {
+                            Text(song.title).font(.subheadline.bold()).lineLimit(1)
+                            Text(song.artist).font(.caption).foregroundColor(.secondary).lineLimit(1)
+                        }
+                        Spacer()
+                    }
+                }.buttonStyle(.plain)
+                if player.loading { ProgressView() }
+                Button(action: player.toggle) {
+                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill").frame(width: 44, height: 44)
+                }.accessibilityLabel(player.isPlaying ? "Pause" : "Play")
+                Button(action: player.next) { Image(systemName: "forward.end.fill").frame(width: 40, height: 44) }
+                    .accessibilityLabel("Next song")
+            }
+            .padding(.horizontal).padding(.vertical, 8).background(.regularMaterial)
+        }
     }
 }
 
