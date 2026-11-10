@@ -3,6 +3,29 @@ import XCTest
 @testable import Play
 
 final class PlayTests: XCTestCase {
+    @MainActor func testTogetherHostAndGuestPerformRealWebSocketHandshake() async throws {
+        let hostPlayer = PlaybackController(api: MusicAPI())
+        let guestPlayer = PlaybackController(api: MusicAPI())
+        let host = TogetherSession(player: hostPlayer)
+        let guest = TogetherSession(player: guestPlayer)
+        defer { guest.leave(); host.leave() }
+        host.host(name: "Host", addressOverride: "127.0.0.1")
+        for _ in 0..<100 {
+            if host.invite != nil { break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        let invite = try XCTUnwrap(host.invite, host.error ?? "Host did not listen")
+        guest.join(link: invite, name: "Guest")
+        for _ in 0..<150 {
+            if guest.connected && guest.participants.count == 2 { break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        XCTAssertTrue(guest.connected, guest.error ?? "Guest did not connect")
+        XCTAssertEqual(Set(guest.participants.map(\.name)), Set(["Host", "Guest"]))
+        XCTAssertTrue(host.isHost)
+        XCTAssertFalse(guest.isHost)
+    }
+
     func testTogetherInvitationRoundTripAndInvalidSchemes() {
         let invite = TogetherInvite(host: "192.168.1.20", port: 9090, sessionID: "room-1", key: "secret +&key")
         XCTAssertEqual(TogetherInvite.parse(invite.link), invite)

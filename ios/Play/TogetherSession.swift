@@ -97,10 +97,10 @@ final class TogetherSession: ObservableObject {
         player.interceptSong = { [weak self] song in self?.requestSong(song) ?? false }
     }
 
-    func host(name: String) {
+    func host(name: String, addressOverride: String? = nil) {
         leave()
         guard player.current?.isLocal != true else { error = "Choose an online song before hosting. Local files are not transferred."; return }
-        guard let address = Self.wifiAddress() else { error = "Connect to Wi-Fi before hosting a session."; return }
+        guard let address = addressOverride ?? Self.wifiAddress() else { error = "Connect to Wi-Fi before hosting a session."; return }
         isHost = true; displayName = String(name.prefix(64)); error = nil
         sessionID = UUID().uuidString; key = UUID().uuidString + UUID().uuidString
         participantID = UUID().uuidString
@@ -148,6 +148,10 @@ final class TogetherSession: ObservableObject {
             }
         }
         connection.start(queue: .main)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
+            guard let self = self, self.peers[id] != nil, !self.connected else { return }
+            self.error = "The host did not respond. Check Wi-Fi and the invitation."; self.leave()
+        }
     }
 
     func leave() {
@@ -283,7 +287,7 @@ final class TogetherSession: ObservableObject {
         let songs = room.queue.map(\.song)
         let song = songs[room.currentIndex]
         guard !song.isLocal else { return }
-        let elapsed = room.isPlaying ? min(2500, max(0, Double(Self.now()) + (clockOffset ?? 0) - Double(room.sentAtElapsedRealtimeMs))) : 0
+        let elapsed = room.isPlaying && clockOffset != nil ? min(2500, max(0, Double(Self.now()) + (clockOffset ?? 0) - Double(room.sentAtElapsedRealtimeMs))) : 0
         let target = Double(room.positionMs) / 1000 + elapsed / 1000
         applying = true
         defer { applying = false }
