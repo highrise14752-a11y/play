@@ -9,13 +9,11 @@ package com.nikhil.yt.ui.component
 
 import android.annotation.SuppressLint
 import android.content.Intent
-import android.content.res.Configuration
 import android.os.Build
 import android.widget.Toast
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -106,6 +104,7 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.animateFloatAsState
@@ -124,7 +123,6 @@ import kotlin.math.sin
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
@@ -132,6 +130,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
+import android.os.SystemClock
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
@@ -191,7 +191,6 @@ import kotlin.math.exp
 import kotlin.time.Duration.Companion.seconds
 
 
-private val AppleMusicEasing = CubicBezierEasing(0.25f, 0.1f, 0.25f, 1.0f)
 private val SmoothDecelerateEasing = CubicBezierEasing(0.0f, 0.0f, 0.2f, 1.0f)
 
 private fun isRtlText(text: String): Boolean {
@@ -423,7 +422,6 @@ fun Lyrics(
     val menuState = LocalMenuState.current
     val density = LocalDensity.current
     val context = LocalContext.current
-    val configuration = LocalConfiguration.current
 
     DisposableEffect(Unit) {
         val window = (context as? android.app.Activity)?.window
@@ -432,9 +430,6 @@ fun Lyrics(
             window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
     }
-
-    val landscapeOffset =
-        configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
     val lyricsTextPosition by rememberEnumPreference(LyricsTextPositionKey, LyricsPosition.LEFT)
     val lyricsAnimationStyle by rememberEnumPreference(LyricsAnimationStyleKey, LyricsAnimationStyle.APPLE)
@@ -491,7 +486,7 @@ fun Lyrics(
         if (lyrics != null && isTtml(lyrics)) 0L else LyricsWordSyncLeadMs
     }
 
-    var currentLineIndex by remember {
+    var currentLineIndex by remember(lyrics, mediaMetadata?.id) {
         mutableIntStateOf(-1)
     }
     var deferredCurrentLineIndex by rememberSaveable {
@@ -502,24 +497,15 @@ fun Lyrics(
         mutableLongStateOf(0L)
     }
 
-    var previousLineIndex by rememberSaveable {
-        mutableIntStateOf(0)
-    }
 
-    var lastPreviewTime by rememberSaveable {
+    var lastPreviewTime by remember(lyrics, mediaMetadata?.id) {
         mutableLongStateOf(0L)
     }
     var isSeeking by remember {
         mutableStateOf(false)
     }
 
-    var initialScrollDone by rememberSaveable {
-        mutableStateOf(false)
-    }
 
-    var shouldScrollToFirstLine by rememberSaveable {
-        mutableStateOf(true)
-    }
 
     var isAppMinimized by rememberSaveable {
         mutableStateOf(false)
@@ -538,6 +524,7 @@ fun Lyrics(
     var showMaxSelectionToast by remember { mutableStateOf(false) }
 
     val lazyListState = rememberLazyListState()
+    val isDragging by lazyListState.interactionSource.collectIsDraggedAsState()
 
     BackHandler(enabled = isSelectionModeActive) {
         isSelectionModeActive = false
@@ -562,11 +549,6 @@ fun Lyrics(
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP) {
-                val visibleItemsInfo = lazyListState.layoutInfo.visibleItemsInfo
-                val isCurrentLineVisible = visibleItemsInfo.any { it.index == currentLineIndex }
-                if (isCurrentLineVisible) {
-                    initialScrollDone = false
-                }
                 isAppMinimized = true
             } else if(event == Lifecycle.Event.ON_START) {
                 isAppMinimized = false
@@ -583,21 +565,18 @@ fun Lyrics(
         selectedIndices.clear()
     }
 
-    var isManualScrolling by rememberSaveable {
+    var isManualScrolling by remember(lyrics, mediaMetadata?.id) {
         mutableStateOf(false)
     }
 
-    LaunchedEffect(lyrics, lines, isAppMinimized) {
+    LaunchedEffect(mediaMetadata?.id, lyrics, lines, isAppMinimized) {
         if (lyrics.isNullOrEmpty() || (!lyrics.startsWith("[") && !isTtml(lyrics))) {
             currentLineIndex = -1
             currentPlaybackPosition = 0L
             return@LaunchedEffect
         }
+        if (isAppMinimized) return@LaunchedEffect
         while (isActive) {
-            if (isAppMinimized) {
-                delay(250L)
-                continue
-            }
             withFrameNanos { }
             val sliderPosition = sliderPositionProvider()
             val seekingNow = sliderPosition != null
@@ -616,104 +595,29 @@ fun Lyrics(
         }
     }
 
-    LaunchedEffect(isSeeking, lastPreviewTime) {
+    LaunchedEffect(isSeeking, isManualScrolling, lastPreviewTime, isDragging, isSelectionModeActive) {
         if (isSeeking) {
+            isManualScrolling = false
             lastPreviewTime = 0L
-        } else if (lastPreviewTime != 0L) {
+        } else if (isManualScrolling && !isDragging && !isSelectionModeActive) {
             delay(LyricsPreviewTime)
             isManualScrolling = false
             lastPreviewTime = 0L
         }
     }
 
-    LaunchedEffect(currentLineIndex, lastPreviewTime, initialScrollDone) {
-
-        fun calculateOffset() = with(density) {
-            if (currentLineIndex < 0 || currentLineIndex >= lines.size) return@with 0
-            val currentItem = lines[currentLineIndex]
-            val totalNewLines = currentItem.text.count { it == '\n' }
-
-            val dpValue = if (landscapeOffset) 16.dp else 20.dp
-            dpValue.toPx().toInt() * totalNewLines
-        }
-
-        if (!isSynced) return@LaunchedEffect
-
-        suspend fun performSmoothPageScroll(targetIndex: Int, isSeek: Boolean = false) {
-            // Don't block on animation - let new scroll requests interrupt old ones
-
-            try {
-                val itemInfo = lazyListState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == targetIndex }
-                if (itemInfo != null) {
-                    // Item is visible, just center it
-                    val viewportHeight = lazyListState.layoutInfo.viewportEndOffset - lazyListState.layoutInfo.viewportStartOffset
-                    val center = lazyListState.layoutInfo.viewportStartOffset + (viewportHeight / 2)
-                    val itemCenter = itemInfo.offset + itemInfo.size / 2
-                    val offset = itemCenter - center
-
-                    if (abs(offset) > 5) {
-                        lazyListState.animateScrollBy(
-                            value = offset.toFloat(),
-                            animationSpec = if (isSeek) {
-                                // Faster response for seeking
-                                spring(
-                                    dampingRatio = Spring.DampingRatioLowBouncy,
-                                    stiffness = Spring.StiffnessMedium
-                                )
-                            } else {
-                                // Smooth auto-scroll
-                                spring(
-                                    dampingRatio = Spring.DampingRatioNoBouncy,
-                                    stiffness = Spring.StiffnessLow
-                                )
-                            }
-                        )
-                    }
-                } else {
-                    // Item not visible - use simpler scrollToItem for better performance
-                    val firstVisibleIndex = lazyListState.firstVisibleItemIndex
-                    val distance = abs(targetIndex - firstVisibleIndex)
-
-                    if (distance > 15) {
-                        // Far away - instant scroll to vicinity, then smooth scroll
-                        lazyListState.scrollToItem(targetIndex)
-                    } else {
-                        // Close - just animate
-                        lazyListState.animateScrollToItem(
-                            index = targetIndex,
-                            scrollOffset = 0
-                        )
-                    }
-                }
-            } catch (e: Exception) {
-                // Ignore scroll interruptions
-            }
-        }
-
-        if((currentLineIndex == 0 && shouldScrollToFirstLine) || !initialScrollDone) {
-            shouldScrollToFirstLine = false
-            val initialCenterIndex = kotlin.math.max(0, currentLineIndex)
-            performSmoothPageScroll(initialCenterIndex)
-            if(!isAppMinimized) {
-                initialScrollDone = true
-            }
-        } else if (currentLineIndex != -1) {
-            deferredCurrentLineIndex = currentLineIndex
-            if (isSeeking) {
-                val seekCenterIndex = kotlin.math.max(0, currentLineIndex)
-                performSmoothPageScroll(seekCenterIndex, isSeek = true)
-            } else if ((lastPreviewTime == 0L || currentLineIndex != previousLineIndex) && scrollLyrics && !isManualScrolling) {
-                if (currentLineIndex != previousLineIndex) {
-                    val centerTargetIndex = kotlin.math.max(0, currentLineIndex)
-                    performSmoothPageScroll(centerTargetIndex)
-                }
-            }
-        }
-        if(currentLineIndex > 0) {
-            shouldScrollToFirstLine = true
-        }
-        previousLineIndex = currentLineIndex
+    LaunchedEffect(currentLineIndex, isSelectionModeActive) {
+        if (!isSelectionModeActive) deferredCurrentLineIndex = currentLineIndex
     }
+    LyricsAutoScrollEffect(
+        listState = lazyListState,
+        activeLineIndex = currentLineIndex,
+        lineCount = lines.size,
+        enabled = isSynced && scrollLyrics,
+        suspended = isManualScrolling || isDragging || isSelectionModeActive || isAppMinimized,
+        contentKey = remember(mediaMetadata?.id, lyrics) { Any() },
+        animationStyle = lyricsAnimationStyle,
+    )
 
     BoxWithConstraints(
         contentAlignment = Alignment.TopCenter,
@@ -745,7 +649,7 @@ fun Lyrics(
                 .asPaddingValues(),
             modifier = Modifier
                 .smoothFadingEdge(vertical = 72.dp)
-                .nestedScroll(remember {
+                .nestedScroll(remember(lyrics, mediaMetadata?.id) {
                     var lastScrollTime = 0L
                     object : NestedScrollConnection {
                         override fun onPostScroll(
@@ -753,8 +657,8 @@ fun Lyrics(
                             available: Offset,
                             source: NestedScrollSource
                         ): Offset {
-                            if (!isSelectionModeActive && source == NestedScrollSource.UserInput) {
-                                val currentTime = System.currentTimeMillis()
+                            if (!isSelectionModeActive && source == NestedScrollSource.UserInput && consumed.y != 0f) {
+                                val currentTime = SystemClock.uptimeMillis()
                                 // Debounce scroll updates to reduce state changes
                                 if (currentTime - lastScrollTime > 50) {
                                     lastPreviewTime = currentTime
@@ -769,9 +673,8 @@ fun Lyrics(
                             consumed: Velocity,
                             available: Velocity
                         ): Velocity {
-                            if (!isSelectionModeActive) {
-                                lastPreviewTime = System.currentTimeMillis()
-                                isManualScrolling = true
+                            if (!isSelectionModeActive && isManualScrolling) {
+                                lastPreviewTime = SystemClock.uptimeMillis()
                             }
                             return super.onPostFling(consumed, available)
                         }
@@ -828,21 +731,20 @@ fun Lyrics(
 
                     val animatedAlpha by animateFloatAsState(
                         targetValue = targetAlpha,
-                        animationSpec = tween(
+                        animationSpec = if (lyricsAnimationStyle == LyricsAnimationStyle.NONE) snap() else tween(
                             durationMillis = 400,
                             easing = SmoothDecelerateEasing
                         ),
                         label = "lyricAlpha"
                     )
 
-                    val targetScale = 1f
+                    val targetScale = if (lyricsAnimationStyle == LyricsAnimationStyle.APPLE &&
+                        isSynced && index != displayedCurrentLineIndex && !isSelectionModeActive) 0.96f else 1f
 
                     val animatedScale by animateFloatAsState(
                         targetValue = targetScale,
-                        animationSpec = spring(
-                            dampingRatio = Spring.DampingRatioNoBouncy,
-                            stiffness = Spring.StiffnessLow
-                        ),
+                        animationSpec = if (lyricsAnimationStyle == LyricsAnimationStyle.APPLE)
+                            tween(450, easing = AppleLyricsEasing) else snap(),
                         label = "lyricScale"
                     )
 
@@ -860,7 +762,7 @@ fun Lyrics(
 
                     val animatedBlur by animateFloatAsState(
                         targetValue = targetBlur,
-                        animationSpec = tween(
+                        animationSpec = if (lyricsAnimationStyle == LyricsAnimationStyle.NONE) snap() else tween(
                             durationMillis = 300,
                             easing = FastOutSlowInEasing
                         ),
@@ -888,27 +790,7 @@ fun Lyrics(
                                     }
                                 } else if (isSynced && changeLyrics) {
                                     playerConnection.player.seekTo(item.time)
-                                    scope.launch {
-                                        val itemInfo = lazyListState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == index }
-                                        if (itemInfo != null) {
-                                            val viewportHeight = lazyListState.layoutInfo.viewportEndOffset - lazyListState.layoutInfo.viewportStartOffset
-                                            val center = lazyListState.layoutInfo.viewportStartOffset + (viewportHeight / 2)
-                                            val itemCenter = itemInfo.offset + itemInfo.size / 2
-                                            val offset = itemCenter - center
-
-                                            if (abs(offset) > 10) {
-                                                lazyListState.animateScrollBy(
-                                                    value = offset.toFloat(),
-                                                    animationSpec = spring(
-                                                        dampingRatio = Spring.DampingRatioNoBouncy,
-                                                        stiffness = Spring.StiffnessVeryLow
-                                                    )
-                                                )
-                                            }
-                                        } else {
-                                            lazyListState.animateScrollToItem(index)
-                                        }
-                                    }
+                                    isManualScrolling = false
                                     lastPreviewTime = 0L
                                 }
                             },
@@ -953,23 +835,13 @@ fun Lyrics(
                         ) {
                             Column(
                                 modifier = itemModifier,
-                                horizontalAlignment = when (lyricsTextPosition) {
-                                    LyricsPosition.LEFT -> Alignment.Start
-                                    LyricsPosition.CENTER -> Alignment.CenterHorizontally
-                                    LyricsPosition.RIGHT -> Alignment.End
-                                }
+                                horizontalAlignment = lyricsTextPosition.lineAlignment
                             ) {
                         val isActiveLine = index == displayedCurrentLineIndex && isSynced
                         val lineColor = remember(isActiveLine, lyricsBaseColor) {
                             if (isActiveLine) lyricsBaseColor else lyricsBaseColor.copy(alpha = 0.7f)
                         }
-                        val alignment = remember(lyricsTextPosition) {
-                            when (lyricsTextPosition) {
-                                LyricsPosition.LEFT -> TextAlign.Start
-                                LyricsPosition.CENTER -> TextAlign.Center
-                                LyricsPosition.RIGHT -> TextAlign.End
-                            }
-                        }
+                        val alignment = lyricsTextPosition.textAlignment
 
                         val hasWordTimings = remember(item.words) { item.words?.isNotEmpty() == true }
 
@@ -1459,149 +1331,6 @@ fun Lyrics(
                                     lineHeight = (lyricsTextSize * lyricsLineSpacing).sp
                                 )
                             }
-                        } else if (hasWordTimings && item.words != null && effectiveAnimationStyle == LyricsAnimationStyle.KARAOKE) {
-                            val styledText = buildAnnotatedString {
-                                item.words.forEachIndexed { wordIndex, word ->
-                                    val wordStartMs = (word.startTime * 1000).toLong()
-                                    val wordEndMs = (word.endTime * 1000).toLong()
-                                    val wordDuration = (wordEndMs - wordStartMs).coerceAtLeast(1L)
-
-                                    val isWordActive = isActiveLine && currentPlaybackPosition >= wordStartMs && currentPlaybackPosition < wordEndMs
-                                    val hasWordPassed = (isActiveLine && currentPlaybackPosition >= wordEndMs) || (!isActiveLine && index < displayedCurrentLineIndex)
-                                    val isUpcoming = isActiveLine && currentPlaybackPosition < wordStartMs
-
-                                    if (isWordActive && wordDuration > 0) {
-                                        val timeElapsed = currentPlaybackPosition - wordStartMs
-                                        val linearProgress = (timeElapsed.toFloat() / wordDuration.toFloat()).coerceIn(0f, 1f)
-
-                                        val fillProgress = linearProgress * linearProgress * (3f - 2f * linearProgress)
-
-                                        val breatheCycleDuration = wordDuration.toFloat().coerceIn(400f, 2000f)
-                                        val breathePhase = (timeElapsed % breatheCycleDuration) / breatheCycleDuration
-                                        val breatheEffect = (sin(breathePhase * Math.PI.toFloat()) * 0.05f).coerceIn(0f, 0.05f)
-
-                                        val glowIntensity = (fillProgress + breatheEffect).coerceIn(0f, 1.0f)
-
-                                        val wordBrush = rtlAwareHorizontalGradient(
-                                            isRtl = lineIsRtl,
-                                            0.0f to lyricsBaseColor,
-                                            (fillProgress * 0.85f).coerceIn(0f, 0.99f) to lyricsBaseColor,
-                                            fillProgress.coerceIn(0.01f, 0.99f) to lyricsBaseColor.copy(alpha = 0.85f),
-                                            (fillProgress + 0.02f).coerceIn(0.01f, 1f) to lyricsBaseColor.copy(alpha = 0.45f),
-                                            (fillProgress + 0.08f).coerceIn(0.01f, 1f) to lyricsBaseColor.copy(alpha = 0.3f),
-                                            1.0f to lyricsBaseColor.copy(alpha = 0.3f)
-                                        )
-
-                                        withStyle(
-                                            style = SpanStyle(
-                                                brush = wordBrush,
-                                                fontWeight = FontWeight.ExtraBold
-                                            )
-                                        ) {
-                                            append(word.text)
-                                        }
-                                    } else if (hasWordPassed) {
-                                        withStyle(
-                                            style = SpanStyle(
-                                                color = lyricsBaseColor,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        ) {
-                                            append(word.text)
-                                        }
-                                    } else if (isUpcoming && isActiveLine) {
-                                        withStyle(
-                                            style = SpanStyle(
-                                                color = lyricsBaseColor.copy(alpha = 0.3f),
-                                                fontWeight = FontWeight.Medium
-                                            )
-                                        ) {
-                                            append(word.text)
-                                        }
-                                    } else {
-                                        val wordColor = if (!isActiveLine) lineColor else lyricsBaseColor.copy(alpha = 0.3f)
-
-                                        withStyle(
-                                            style = SpanStyle(
-                                                color = wordColor,
-                                                fontWeight = FontWeight.Medium
-                                            )
-                                        ) {
-                                            append(word.text)
-                                        }
-                                    }
-
-                                    if (wordIndex < item.words.size - 1) {
-                                        append(" ")
-                                    }
-                                }
-                            }
-
-                            Text(
-                                text = styledText,
-                                fontSize = lyricsTextSize.sp,
-                                textAlign = alignment,
-                                lineHeight = (lyricsTextSize * lyricsLineSpacing).sp
-                            )
-                        } else if (hasWordTimings && item.words != null && effectiveAnimationStyle == LyricsAnimationStyle.APPLE) {
-
-                            val styledText = buildAnnotatedString {
-                                item.words.forEachIndexed { wordIndex, word ->
-                                    val wordStartMs = (word.startTime * 1000).toLong()
-                                    val wordEndMs = (word.endTime * 1000).toLong()
-                                    val wordDuration = wordEndMs - wordStartMs
-
-                                    val isWordActive = isActiveLine && currentPlaybackPosition >= wordStartMs && currentPlaybackPosition < wordEndMs
-                                    val hasWordPassed = (isActiveLine && currentPlaybackPosition >= wordEndMs) || (!isActiveLine && index < displayedCurrentLineIndex)
-
-                                    val rawProgress = if (isWordActive && wordDuration > 0) {
-                                        val elapsed = currentPlaybackPosition - wordStartMs
-                                        (elapsed.toFloat() / wordDuration).coerceIn(0f, 1f)
-                                    } else if (hasWordPassed) {
-                                        1f
-                                    } else {
-                                        0f
-                                    }
-
-                                    val smoothProgress = rawProgress * rawProgress * (3f - 2f * rawProgress)
-
-                                    val wordAlpha = when {
-                                        !isActiveLine -> 0.55f
-                                        hasWordPassed -> 1f
-                                        isWordActive -> 0.55f + (0.45f * smoothProgress)
-                                        else -> 0.35f
-                                    }
-
-                                    val wordColor = lyricsBaseColor.copy(alpha = wordAlpha)
-
-                                    val wordWeight = when {
-                                            !isActiveLine -> FontWeight.SemiBold
-                                            hasWordPassed -> FontWeight.Bold
-                                            isWordActive -> FontWeight.ExtraBold
-                                            else -> FontWeight.Normal
-                                        }
-
-                                    withStyle(
-                                        style = SpanStyle(
-                                            color = wordColor,
-                                            fontWeight = wordWeight
-                                        )
-                                    ) {
-                                        append(word.text)
-                                    }
-
-                                    if (wordIndex < item.words.size - 1) {
-                                        append(" ")
-                                    }
-                                }
-                            }
-
-                            Text(
-                                text = styledText,
-                                fontSize = lyricsTextSize.sp,
-                                textAlign = alignment,
-                                lineHeight = (lyricsTextSize * lyricsLineSpacing).sp
-                            )
                         } else if (isActiveLine && effectiveAnimationStyle == LyricsAnimationStyle.GLOW && !reduceMotionDuringScroll) {
 
                             val styledText = buildAnnotatedString {
@@ -1687,25 +1416,11 @@ fun Lyrics(
                                 fontWeight = FontWeight.ExtraBold,
                                 lineHeight = (lyricsTextSize * lyricsLineSpacing).sp,
                                 modifier = Modifier.graphicsLayer {
-                                    scaleX = 1f
-                                    scaleY = 1f
+                                    scaleX = popInScale.value * bounceScale
+                                    scaleY = popInScale.value * bounceScale
                                 }
                             )
                         } else if (isActiveLine && effectiveAnimationStyle == LyricsAnimationStyle.APPLE && !reduceMotionDuringScroll) {
-
-                            val popInScale = remember { Animatable(0.96f) }
-
-                            LaunchedEffect(index) {
-
-                                popInScale.snapTo(0.96f)
-                                popInScale.animateTo(
-                                    targetValue = 1f,
-                                    animationSpec = spring(
-                                        dampingRatio = Spring.DampingRatioNoBouncy,
-                                        stiffness = Spring.StiffnessLow
-                                    )
-                                )
-                            }
 
                             val styledText = if (item.words != null) {
                                 buildAnnotatedString {
@@ -1735,21 +1450,6 @@ fun Lyrics(
                                 }
                             )
                         } else {
-
-                            val popInScale = remember { Animatable(1f) }
-
-                            LaunchedEffect(isActiveLine, reduceMotionDuringScroll) {
-                                if (isActiveLine && !reduceMotionDuringScroll) {
-                                    popInScale.snapTo(0.96f)
-                                    popInScale.animateTo(
-                                        targetValue = 1f,
-                                        animationSpec = spring(
-                                            dampingRatio = Spring.DampingRatioNoBouncy,
-                                            stiffness = Spring.StiffnessMedium
-                                        )
-                                    )
-                                }
-                            }
 
                             val styledText = if (item.words != null) {
                                 buildAnnotatedString {
@@ -1812,15 +1512,6 @@ fun Lyrics(
                             isManualScrolling = false
                             lastPreviewTime = 0L
 
-                            // Automatic scroll to current lyric
-                            if (currentLineIndex >= 0) {
-                                scope.launch {
-                                    lazyListState.animateScrollToItem(
-                                        index = currentLineIndex,
-                                        scrollOffset = 0
-                                    )
-                                }
-                            }
                         }
                         .padding(horizontal = 20.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,

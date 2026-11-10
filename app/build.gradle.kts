@@ -23,8 +23,8 @@ android {
     applicationId = "com.highrise14752.play"
         minSdk = 26
         targetSdk = 36
-        versionCode = 13
-        versionName = "1.1.2-play.3"
+        versionCode = 14
+        versionName = "1.1.2-play.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -236,6 +236,9 @@ dependencies {
 
     implementation(libs.timber)
     testImplementation(libs.junit)
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4:${libs.versions.compose.get()}")
+    androidTestImplementation("androidx.test:runner:1.7.0")
+    debugImplementation("androidx.compose.ui:ui-test-manifest:${libs.versions.compose.get()}")
     implementation("com.github.therealbush:translator:1.1.1")
     implementation("androidx.compose.material3.adaptive:adaptive:1.2.0")
 

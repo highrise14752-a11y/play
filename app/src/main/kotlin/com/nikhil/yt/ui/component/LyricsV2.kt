@@ -7,6 +7,10 @@
 package com.nikhil.yt.ui.component
 
 import android.view.WindowManager
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import android.os.SystemClock
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.Spring
@@ -39,7 +43,6 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -65,13 +68,15 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
 import com.nikhil.yt.LocalPlayerConnection
 import com.nikhil.yt.R
+import com.nikhil.yt.constants.LyricsAnimationStyle
+import com.nikhil.yt.constants.LyricsAnimationStyleKey
+import com.nikhil.yt.ui.screens.settings.LyricsPosition
 import com.nikhil.yt.constants.LyricsClickKey
 import com.nikhil.yt.constants.LyricsScrollKey
 import com.nikhil.yt.constants.LyricsTextPositionKey
@@ -92,7 +97,6 @@ import com.nikhil.yt.lyrics.LyricsUtils.parseTtml
 import com.nikhil.yt.lyrics.WordTimestamp
 import com.nikhil.yt.ui.component.shimmer.ShimmerHost
 import com.nikhil.yt.ui.component.shimmer.TextPlaceholder
-import com.nikhil.yt.ui.screens.settings.LyricsPosition
 import com.nikhil.yt.ui.utils.smoothFadingEdge
 import com.nikhil.yt.utils.rememberEnumPreference
 import com.nikhil.yt.utils.rememberPreference
@@ -112,12 +116,6 @@ private const val TTML_LEAD_MS = 0L
 /** Seconds to wait before auto-scroll resumes after manual scroll. */
 private const val MANUAL_SCROLL_TIMEOUT_MS = 3000L
 
-/** Apple-Music-style easing for smooth deceleration. */
-private val V2Easing = CubicBezierEasing(0.25f, 0.1f, 0.25f, 1.0f)
-
-/** Liquid fill easing: fast attack, very smooth deceleration (Apple Music-like). */
-private val LiquidFillEasing = CubicBezierEasing(0.0f, 0.0f, 0.15f, 1.0f)
-
 /** Sentinel entry prepended so auto-scroll has headroom above the first line. */
 private val HEAD_LYRICS_ENTRY = LyricsEntry(time = 0L, text = "")
 
@@ -133,13 +131,22 @@ fun LyricsV2(
     sliderPositionProvider: () -> Long?,
     modifier: Modifier = Modifier,
 ) {
+    val animationStyle by rememberEnumPreference(LyricsAnimationStyleKey, LyricsAnimationStyle.APPLE)
+    // V2 provides the fluid Apple renderer; other styles share the existing renderer.
+    if (animationStyle != LyricsAnimationStyle.APPLE) {
+        Lyrics(sliderPositionProvider, modifier)
+        return
+    }
     val playerConnection = LocalPlayerConnection.current ?: return
     val player = playerConnection.player
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val lifecycleState by lifecycleOwner.lifecycle.currentStateFlow.collectAsState()
+    val isAppVisible = lifecycleState.isAtLeast(Lifecycle.State.STARTED)
     val context = LocalContext.current
     val density = LocalDensity.current
-    val scope = rememberCoroutineScope()
 
     // ── Preferences ──
+    val lyricsTextPosition by rememberEnumPreference(LyricsTextPositionKey, LyricsPosition.LEFT)
     val (lyricsClick) = rememberPreference(LyricsClickKey, defaultValue = true)
     val (lyricsScroll) = rememberPreference(LyricsScrollKey, defaultValue = true)
     val (lyricsTextSize) = rememberPreference(LyricsTextSizeKey, defaultValue = 26f)
@@ -160,7 +167,8 @@ fun LyricsV2(
 
     // ── Lyrics data ──
     val currentLyrics by playerConnection.currentLyrics.collectAsState(initial = null)
-    val lyrics = currentLyrics?.lyrics
+    val lyrics = currentLyrics?.lyrics?.trim()
+    val mediaMetadata by playerConnection.mediaMetadata.collectAsState()
 
     // ── Parse lyrics into entries ──
     val isSynced = remember(lyrics) { lyrics != null && (lyrics!!.startsWith("[") || isTtml(lyrics!!)) }
@@ -274,11 +282,11 @@ fun LyricsV2(
     // ── Playback position tracking ──
     val leadMs = if (isTtmlFormat) TTML_LEAD_MS else LRC_LEAD_MS
     var currentPositionMs by remember { mutableLongStateOf(0L) }
-    var currentLineIndex by remember { mutableIntStateOf(0) }
+    var currentLineIndex by remember(lyrics, mediaMetadata?.id) { mutableIntStateOf(0) }
 
     // Frame-accurate position loop
-    LaunchedEffect(entriesWithWords, isSynced) {
-        if (!isSynced || entriesWithWords.isEmpty()) return@LaunchedEffect
+    LaunchedEffect(mediaMetadata?.id, entriesWithWords, isSynced, isAppVisible) {
+        if (!isAppVisible || !isSynced || entriesWithWords.isEmpty()) return@LaunchedEffect
         while (isActive) {
             val sliderPos = sliderPositionProvider()
             val pos = sliderPos ?: player.currentPosition
@@ -294,52 +302,45 @@ fun LyricsV2(
 
     // ── Scroll State ──
     val listState = rememberLazyListState()
-    var isManualScrolling by remember { mutableStateOf(false) }
-    var lastManualScrollTime by remember { mutableLongStateOf(0L) }
+    val isDragging by listState.interactionSource.collectIsDraggedAsState()
+    var isManualScrolling by remember(lyrics, mediaMetadata?.id) { mutableStateOf(false) }
+    var lastManualScrollTime by remember(lyrics, mediaMetadata?.id) { mutableLongStateOf(0L) }
 
     // Detect manual scrolling
-    val nestedScrollConnection = remember {
+    val nestedScrollConnection = remember(lyrics, mediaMetadata?.id) {
         object : NestedScrollConnection {
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                if (source == NestedScrollSource.UserInput) {
+                if (source == NestedScrollSource.UserInput && available.y != 0f) {
                     isManualScrolling = true
-                    lastManualScrollTime = System.currentTimeMillis()
+                    lastManualScrollTime = SystemClock.uptimeMillis()
                 }
                 return Offset.Zero
+            }
+
+            override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
+                if (isManualScrolling) lastManualScrollTime = SystemClock.uptimeMillis()
+                return Velocity.Zero
             }
         }
     }
 
     // Resume auto-scroll after timeout
-    LaunchedEffect(isManualScrolling, lastManualScrollTime) {
-        if (isManualScrolling) {
+    LaunchedEffect(isManualScrolling, lastManualScrollTime, isDragging) {
+        if (isManualScrolling && !isDragging) {
             delay(MANUAL_SCROLL_TIMEOUT_MS)
             isManualScrolling = false
         }
     }
 
-    // Auto-scroll to active line
-    LaunchedEffect(currentLineIndex, isManualScrolling, lyricsScroll) {
-        if (!lyricsScroll || isManualScrolling || !isSynced) return@LaunchedEffect
-        if (currentLineIndex < 0 || currentLineIndex >= entriesWithWords.size) return@LaunchedEffect
-
-        val visibleInfo = listState.layoutInfo
-        val viewportHeight = visibleInfo.viewportSize.height
-        val targetOffset = (viewportHeight * 0.35f).toInt() // Center bias at 35% from top
-
-        val distance = abs(currentLineIndex - (listState.firstVisibleItemIndex))
-        if (distance > 15) {
-            // Far jump — snap first, then settle
-            listState.scrollToItem(
-                (currentLineIndex - 2).coerceAtLeast(0),
-                0
-            )
-        }
-        listState.animateScrollToItem(
-            index = currentLineIndex,
-            scrollOffset = -targetOffset
-        )
-    }
+    LyricsAutoScrollEffect(
+        listState = listState,
+        activeLineIndex = currentLineIndex,
+        lineCount = entriesWithWords.size,
+        enabled = lyricsScroll && isSynced,
+        suspended = isManualScrolling || isDragging || !isAppVisible,
+        contentKey = remember(mediaMetadata?.id, lyrics) { Any() },
+        anchorFraction = 0.35f,
+    )
 
     // ── Keep screen alive ──
     val activity = context as? android.app.Activity
@@ -414,18 +415,8 @@ fun LyricsV2(
                     return@itemsIndexed
                 }
 
-                // ── Agent-based positioning ──
-                // v1 or null -> Start, v2 -> End, others -> Center
-                val textAlign = when (item.agent?.lowercase()) {
-                    "v1", null -> TextAlign.Start
-                    "v2" -> TextAlign.End
-                    else -> TextAlign.Center
-                }
-                val horizontalAlignment = when (item.agent?.lowercase()) {
-                    "v1", null -> Alignment.Start
-                    "v2" -> Alignment.End
-                    else -> Alignment.CenterHorizontally
-                }
+                val textAlign = lyricsTextPosition.textAlignment
+                val horizontalAlignment = lyricsTextPosition.lineAlignment
 
                 val isActive = isSynced && index == currentLineIndex
                 val isPast = isSynced && index < currentLineIndex
@@ -462,6 +453,7 @@ fun LyricsV2(
                         .then(
                             if (lyricsClick && isSynced && item.time > 0) {
                                 Modifier.clickable {
+                                    isManualScrolling = false
                                     player.seekTo(item.time)
                                 }
                             } else Modifier
@@ -514,13 +506,6 @@ fun LyricsV2(
             androidx.compose.material3.FilledTonalButton(
                 onClick = {
                     isManualScrolling = false
-                    scope.launch {
-                        val viewportHeight = listState.layoutInfo.viewportSize.height
-                        listState.animateScrollToItem(
-                            index = currentLineIndex,
-                            scrollOffset = -(viewportHeight * 0.35f).toInt()
-                        )
-                    }
                 },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)

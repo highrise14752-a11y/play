@@ -17,6 +17,8 @@ Play is a rebranded fork of [Velune](https://github.com/nikhilvishwakarma00/Velu
 - Material You themes and audio controls
 - Listening statistics and Music Together shared listening
 
+In **Settings → Appearance → Lyrics**, choose an animation style and Left, Center, or Right text position. Both lyrics views honor these settings; the experimental view uses its fluid renderer for Apple Music style and the shared renderer for other styles. Automatic following resumes after manual scrolling, seeking, or re-enabling auto-scroll without waiting for the next line. Apple Music glides to the active line, while None follows without animation. Following requires timestamped lyrics. Lyrics position polling stops while the app is in the background, and duplicate/unrendered animation work has been removed.
+
 ## Download location
 
 Open **Settings → Storage → Downloaded songs → Change location** to choose private phone storage, private SD-card storage (when a writable removable card is available), or a normal folder through Android's folder picker. New downloads use the selected location. Use **Move existing downloads** to move completed songs; original data is kept until each copy is saved. Normal-folder audio files retain their original audio format and can be opened in other players. Downloads briefly use phone storage while downloading before being saved to the chosen location. Keep enough temporary phone space for active downloads.
