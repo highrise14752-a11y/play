@@ -108,7 +108,7 @@ private final class AudioTapContext {
 final class MusicHaptics: ObservableObject {
     let supported = CHHapticEngine.capabilitiesForHardware().supportsHaptics
     @Published var enabled: Bool { didSet { UserDefaults.standard.set(enabled, forKey: "haptics.enabled"); refresh() } }
-    @Published var intensity: Double { didSet { UserDefaults.standard.set(intensity, forKey: "haptics.intensity"); refresh() } }
+    @Published var intensity: Double { didSet { UserDefaults.standard.set(intensity, forKey: "haptics.intensity"); updateOutput() } }
     @Published var mode: String { didSet { UserDefaults.standard.set(mode, forKey: "haptics.mode"); refresh() } }
     @Published private(set) var status = "Off"
     private let output = HapticOutput()

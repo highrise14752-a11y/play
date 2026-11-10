@@ -90,6 +90,8 @@ final class TogetherSession: ObservableObject {
     private var pendingPing: Int?
     private var clockOffset: Double?
     private var applying = false
+    private var guestControlsAllowed = false
+    private var guestAddsAllowed = true
 
     init(player: PlaybackController) {
         self.player = player
@@ -163,6 +165,7 @@ final class TogetherSession: ObservableObject {
         for connection in active { connection.stateUpdateHandler = nil; connection.cancel() }
         let wasGuest = connected && !isHost
         connected = false; isHost = false; invite = nil; participants = []; clockOffset = nil
+        guestControlsAllowed = false; guestAddsAllowed = true
         player.sharedSessionActive = false
         if wasGuest { applying = true; player.pause(); applying = false }
         status = "Not connected"
@@ -228,6 +231,8 @@ final class TogetherSession: ObservableObject {
             guard let state = message["state"], let bytes = try? JSONSerialization.data(withJSONObject: state),
                   let room = try? JSONDecoder().decode(TogetherRoom.self, from: bytes), room.sessionId == sessionID else { return }
             participants = room.participants
+            guestControlsAllowed = room.settings.allowGuestsToControlPlayback
+            guestAddsAllowed = room.settings.allowGuestsToAddTracks
             apply(room); return
         }
         guard message["sessionId"] as? String == sessionID else { return }
@@ -250,8 +255,10 @@ final class TogetherSession: ObservableObject {
                   let track = message["track"], let bytes = try? JSONSerialization.data(withJSONObject: track),
                   let song = try? JSONDecoder().decode(TogetherTrack.self, from: bytes), !song.song.isLocal {
             player.enqueue(song.song, next: message["mode"] as? String == "PLAY_NEXT"); broadcast()
-        } else if type == "server_error" || type == "kick" || type == "ban" {
-            error = message["message"] as? String ?? "The host ended your session."; leave()
+        } else if type == "server_error" {
+            error = message["message"] as? String ?? "The host rejected that request."
+        } else if type == "kick" || type == "ban" {
+            error = message["reason"] as? String ?? "The host ended your session."; leave()
         } else if type == "client_leave" && isHost { connection.cancel() }
     }
     private func rebuildParticipants() {
@@ -301,6 +308,7 @@ final class TogetherSession: ObservableObject {
     private func requestControl(_ action: String, value: Double?) -> Bool {
         guard connected && !isHost && !applying else { return false }
         if action == "ended" { return true }
+        guard guestControlsAllowed else { player.error = "The host controls playback in this session."; return true }
         guard let connection = peers.values.first else { return true }
         var control: [String: Any] = ["type": action]
         if let value = value { control["positionMs"] = Int(value * 1000) }
@@ -311,6 +319,7 @@ final class TogetherSession: ObservableObject {
         guard connected && !applying else { return false }
         if song.isLocal { player.error = "Local files cannot be shared in Music Together."; return true }
         guard !isHost, let connection = peers.values.first else { return false }
+        guard guestAddsAllowed else { player.error = "The host has disabled guest queue requests."; return true }
         guard let data = try? JSONEncoder().encode(TogetherTrack(song)), let track = try? JSONSerialization.jsonObject(with: data) else { return true }
         send(["type": "add_track_request", "sessionId": sessionID, "participantId": participantID, "track": track, "mode": "ADD_TO_QUEUE"], to: connection)
         status = "Track requested from host"
@@ -326,7 +335,9 @@ final class TogetherSession: ObservableObject {
         default: break
         }
     }
-    private static func now() -> Int { Int(ProcessInfo.processInfo.systemUptime * 1000) }
+    // Peer clock offsets map this timestamp to Android's elapsed-time clock.
+    // Do not transmit device boot time to other participants.
+    private static func now() -> Int { Int(Date().timeIntervalSince1970 * 1000) }
     private static func wifiAddress() -> String? {
         var list: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&list) == 0 else { return nil }
