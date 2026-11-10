@@ -49,12 +49,18 @@ targets:
     sources: [Tests]
     dependencies:
       - target: Play
+  PlayUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [UITests]
+    dependencies:
+      - target: Play
 schemes:
   Play:
     build:
       targets:
         Play: all
     test:
-      targets: [PlayTests]
+      targets: [PlayTests, PlayUITests]
     archive:
       config: Release

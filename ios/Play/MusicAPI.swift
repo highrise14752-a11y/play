@@ -51,7 +51,7 @@ actor MusicAPI {
                     let artist = runs(1).compactMap { run -> String? in
                         guard let nav = run["navigationEndpoint"] as? [String: Any], nav["browseEndpoint"] != nil else { return nil }
                         return run["text"] as? String
-                    }.first ?? runs(1).first?["text"] as? String ?? "Unknown artist"
+                    }.first ?? (runs(1).first?["text"] as? String) ?? "Unknown artist"
                     let thumb = row["thumbnail"] as? [String: Any]
                     let renderer = thumb?["musicThumbnailRenderer"] as? [String: Any]
                     let image = renderer?["thumbnail"] as? [String: Any]
