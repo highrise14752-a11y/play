@@ -36,11 +36,13 @@ final class PlaybackController: ObservableObject {
     init(api: MusicAPI) {
         self.api = api
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.1, preferredTimescale: 600), queue: .main) { [weak self] time in
-            guard let self = self else { return }
-            let seconds = time.seconds
-            if seconds.isFinite { self.position = max(0, seconds) }
-            let length = self.player.currentItem?.duration.seconds ?? 0
-            if length.isFinite { self.duration = max(0, length) }
+            Task { @MainActor in
+                guard let self = self else { return }
+                let seconds = time.seconds
+                if seconds.isFinite && self.position != max(0, seconds) { self.position = max(0, seconds) }
+                let length = self.player.currentItem?.duration.seconds ?? 0
+                if length.isFinite && self.duration != max(0, length) { self.duration = max(0, length) }
+            }
         }
         statusObserver = player.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
             Task { @MainActor in

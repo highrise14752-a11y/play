@@ -156,9 +156,9 @@ final class MusicHaptics: ObservableObject {
                         guard result == noErr else { framesOut.pointee = 0; return }
                         Unmanaged<AudioTapContext>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).takeUnretainedValue().process(list, frames: framesOut.pointee)
                     })
-                var unmanaged: Unmanaged<MTAudioProcessingTap>?
-                let result = MTAudioProcessingTapCreate(kCFAllocatorDefault, &callbacks, kMTAudioProcessingTapCreationFlag_PostEffects, &unmanaged)
-                guard result == noErr, let tap = unmanaged?.takeRetainedValue() else {
+                var createdTap: MTAudioProcessingTap?
+                let result = MTAudioProcessingTapCreate(kCFAllocatorDefault, &callbacks, kMTAudioProcessingTapCreationFlag_PostEffects, &createdTap)
+                guard result == noErr, let tap = createdTap else {
                     reference.release(); status = "Audio analysis is unavailable for this track."; return
                 }
                 let parameters = AVMutableAudioMixInputParameters(track: track)

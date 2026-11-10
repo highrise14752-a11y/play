@@ -111,18 +111,20 @@ final class TogetherSession: ObservableObject {
             let listener = try NWListener(using: Self.parameters(), on: .any)
             self.listener = listener
             listener.stateUpdateHandler = { [weak self, weak listener] state in
-                guard let self = self else { return }
-                switch state {
-                case .ready:
-                    guard let port = listener?.port?.rawValue else { return }
-                    self.invite = TogetherInvite(host: address, port: port, sessionID: self.sessionID, key: self.key).link
-                    self.connected = true; self.player.sharedSessionActive = true; self.status = "Hosting on Wi-Fi"
-                    self.startTimer()
-                case .failed(let failure): self.error = failure.localizedDescription; self.leave()
-                default: break
+                Task { @MainActor in
+                    guard let self = self else { return }
+                    switch state {
+                    case .ready:
+                        guard let port = listener?.port?.rawValue else { return }
+                        self.invite = TogetherInvite(host: address, port: port, sessionID: self.sessionID, key: self.key).link
+                        self.connected = true; self.player.sharedSessionActive = true; self.status = "Hosting on Wi-Fi"
+                        self.startTimer()
+                    case .failed(let failure): self.error = failure.localizedDescription; self.leave()
+                    default: break
+                    }
                 }
             }
-            listener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
+            listener.newConnectionHandler = { [weak self] connection in Task { @MainActor in self?.accept(connection) } }
             listener.start(queue: .main)
             status = "Starting session…"
         } catch { self.error = error.localizedDescription; leave() }
@@ -139,14 +141,16 @@ final class TogetherSession: ObservableObject {
         let connection = NWConnection(to: .url(url), using: Self.parameters())
         let id = UUID(); peers[id] = connection
         connection.stateUpdateHandler = { [weak self, weak connection] state in
-            guard let self = self, let connection = connection else { return }
-            switch state {
-            case .ready:
-                self.send(["type": "client_hello", "protocolVersion": 1, "sessionId": self.sessionID, "sessionKey": self.key,
-                           "clientId": self.participantID, "displayName": self.displayName], to: connection)
-                self.receive(connection, id: id)
-            case .failed(let failure): self.error = failure.localizedDescription; self.leave()
-            default: break
+            Task { @MainActor in
+                guard let self = self, let connection = connection, self.peers[id] != nil else { return }
+                switch state {
+                case .ready:
+                    self.send(["type": "client_hello", "protocolVersion": 1, "sessionId": self.sessionID, "sessionKey": self.key,
+                               "clientId": self.participantID, "displayName": self.displayName], to: connection)
+                    self.receive(connection, id: id)
+                case .failed(let failure): self.error = failure.localizedDescription; self.leave()
+                default: break
+                }
             }
         }
         connection.start(queue: .main)
@@ -183,11 +187,13 @@ final class TogetherSession: ObservableObject {
         guard peers.count < 12 else { connection.cancel(); return }
         let id = UUID(); peers[id] = connection
         connection.stateUpdateHandler = { [weak self, weak connection] state in
-            guard let self = self, let connection = connection else { return }
-            switch state {
-            case .ready: self.receive(connection, id: id)
-            case .failed, .cancelled: self.peers[id] = nil; self.identities[id] = nil; self.rebuildParticipants()
-            default: break
+            Task { @MainActor in
+                guard let self = self, let connection = connection else { return }
+                switch state {
+                case .ready: self.receive(connection, id: id)
+                case .failed, .cancelled: self.peers[id] = nil; self.identities[id] = nil; self.rebuildParticipants()
+                default: break
+                }
             }
         }
         connection.start(queue: .main)
@@ -198,13 +204,15 @@ final class TogetherSession: ObservableObject {
     }
     private func receive(_ connection: NWConnection, id: UUID) {
         connection.receiveMessage { [weak self, weak connection] data, _, _, failure in
-            guard let self = self, let connection = connection, self.peers[id] != nil else { return }
-            if failure != nil { if !self.isHost { self.error = "Session disconnected"; self.leave() }; connection.cancel(); return }
-            if let data = data, data.count <= 262144,
-               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                self.handle(object, data: data, connection: connection, id: id)
+            Task { @MainActor in
+                guard let self = self, let connection = connection, self.peers[id] != nil else { return }
+                if failure != nil { if !self.isHost { self.error = "Session disconnected"; self.leave() }; connection.cancel(); return }
+                if let data = data, data.count <= 262144,
+                   let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    self.handle(object, data: data, connection: connection, id: id)
+                }
+                if self.peers[id] != nil { self.receive(connection, id: id) }
             }
-            if self.peers[id] != nil { self.receive(connection, id: id) }
         }
     }
     private func send(_ object: [String: Any], to connection: NWConnection) {
@@ -268,11 +276,13 @@ final class TogetherSession: ObservableObject {
     private func startTimer() {
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            guard let self = self else { return }
-            if self.isHost { self.broadcast() }
-            else if let connection = self.peers.values.first {
-                let now = Self.now(); self.pendingPing = now
-                self.send(["type": "heartbeat_ping", "sessionId": self.sessionID, "pingId": now, "clientElapsedRealtimeMs": now], to: connection)
+            Task { @MainActor in
+                guard let self = self else { return }
+                if self.isHost { self.broadcast() }
+                else if let connection = self.peers.values.first {
+                    let now = Self.now(); self.pendingPing = now
+                    self.send(["type": "heartbeat_ping", "sessionId": self.sessionID, "pingId": now, "clientElapsedRealtimeMs": now], to: connection)
+                }
             }
         }
     }
