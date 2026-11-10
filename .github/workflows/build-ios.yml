@@ -1,0 +1,104 @@
+name: Build iOS
+
+# Requires the iOS port; the Android Gradle project cannot produce an IPA.
+on:
+  workflow_dispatch:
+    inputs:
+      project:
+        description: Xcode project or workspace path relative to the repository
+        required: true
+        default: ios/Play.xcodeproj
+        type: string
+      scheme:
+        description: Shared iOS app scheme
+        required: true
+        default: Play
+        type: string
+  push:
+    branches: [main]
+    paths:
+      - 'ios/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build unsigned IPA
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      XCODE_PROJECT: ${{ inputs.project || 'ios/Play.xcodeproj' }}
+      XCODE_SCHEME: ${{ inputs.scheme || 'Play' }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Validate iOS project
+        run: |
+          set -euo pipefail
+          if [[ ! -d "$XCODE_PROJECT" ]]; then
+            echo "::error::Missing Xcode project: $XCODE_PROJECT. Play currently contains Android source only. Add the iOS port and a shared app scheme before building an IPA."
+            exit 1
+          fi
+          case "$XCODE_PROJECT" in
+            *.xcworkspace|*.xcodeproj) ;;
+            *) echo '::error::Choose an .xcodeproj or .xcworkspace directory.'; exit 1 ;;
+          esac
+          xcodebuild -version
+
+      - name: Archive for iPhone and iPad without signing
+        run: |
+          set -euo pipefail
+          if [[ "$XCODE_PROJECT" == *.xcworkspace ]]; then
+            project_args=(-workspace "$XCODE_PROJECT")
+          else
+            project_args=(-project "$XCODE_PROJECT")
+          fi
+          xcodebuild "${project_args[@]}" \
+            -scheme "$XCODE_SCHEME" \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/Play.xcarchive" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY= \
+            archive
+
+      - name: Package unsigned IPA
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          apps=("$RUNNER_TEMP/Play.xcarchive/Products/Applications/"*.app)
+          if [[ ${#apps[@]} -ne 1 ]]; then
+            echo '::error::Expected exactly one archived iOS app. Check the selected app scheme.'
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/ipa/Payload" "$GITHUB_WORKSPACE/ios-artifacts"
+          ditto "${apps[0]}" "$RUNNER_TEMP/ipa/Payload/$(basename "${apps[0]}")"
+          (cd "$RUNNER_TEMP/ipa" && zip -q -r -y "$GITHUB_WORKSPACE/ios-artifacts/Play-unsigned.ipa" Payload)
+          cat > "$GITHUB_WORKSPACE/ios-artifacts/README.txt" <<'NOTE'
+          Play-unsigned.ipa is an unsigned device build, not an installable signed release.
+          It requires a compatible Apple signing/provisioning method before installation.
+          Supported iOS versions are determined by the iOS project's deployment target.
+          This workflow does not convert the Android APK into an iOS app.
+          NOTE
+          cat "$GITHUB_WORKSPACE/ios-artifacts/README.txt" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Play-iOS-unsigned-${{ github.run_number }}
+          path: ios-artifacts/
+          if-no-files-found: error
+          retention-days: 14
