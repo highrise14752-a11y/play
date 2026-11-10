@@ -119,7 +119,7 @@ struct SearchView: View {
                     }
                 }
             }
-            if loading { HStack { Spacer(); ProgressView("Searching…"); Spacer() } }
+            if loading { HStack { Spacer(); ProgressView("Searchingâ€¦"); Spacer() } }
             if let error = error { Text(error).foregroundColor(.orange) }
             if !submitted.isEmpty && results.isEmpty && !loading && error == nil {
                 Text("No songs found. Try another title or artist.").foregroundColor(.secondary)
@@ -174,6 +174,7 @@ struct LibraryView: View {
     }
 
     var body: some View {
+        let visibleSongs = displayed
         VStack(spacing: 12) {
             CategoryChips(choices: ["Playlists", "Songs", "Albums", "Artists"], selection: $section)
             HStack {
@@ -202,14 +203,14 @@ struct LibraryView: View {
                                 }
                         }
                     } else if section == "Albums" || section == "Artists" {
-                        let groups = Dictionary(grouping: displayed) { section == "Albums" ? ($0.album ?? "Unknown album") : $0.artist }
+                        let groups = Dictionary(grouping: visibleSongs) { section == "Albums" ? ($0.album ?? "Unknown album") : $0.artist }
                         ForEach(groups.keys.sorted(), id: \.self) { title in
                             NavigationLink { GroupedCollectionView(title: title, isAlbum: section == "Albums") } label: {
                                 collectionRow(title, icon: section == "Albums" ? "square.stack" : "person.crop.circle", subtitle: "\(groups[title]?.count ?? 0) songs")
                             }
                         }
                     } else {
-                        ForEach(displayed) { song in SongRow(song: song, queue: displayed) }
+                        ForEach(visibleSongs) { song in SongRow(song: song, queue: visibleSongs) }
                     }
                     if library.songs.isEmpty && section != "Playlists" {
                         EmptyMusicState(title: "Your library starts here", message: "Save a song, or import audio from Files.", icon: "music.note")
@@ -346,7 +347,7 @@ struct HapticsSettingsView: View {
     var body: some View {
         Form {
             Toggle("Music haptics", isOn: $haptics.enabled).disabled(!haptics.supported)
-            Text(haptics.supported ? haptics.status : "Haptic feedback isn’t supported on this device.")
+            Text(haptics.supported ? haptics.status : "Haptic feedback isnâ€™t supported on this device.")
                 .font(.caption).foregroundColor(.secondary)
             if haptics.supported {
                 Button("Test vibration") { haptics.testFeedback() }
@@ -360,7 +361,7 @@ struct HapticsSettingsView: View {
                 }
                 Slider(value: $haptics.intensity, in: 0...1) { Text("Intensity") }
                 Text("Intensity: \(Int(haptics.intensity * 100))%")
-                Text("Vibrations follow decoded audio, while Play is onscreen. Vocals emphasis is a frequency filter, not vocal isolation. Streaming formats that don’t expose decoded PCM cannot drive haptics.")
+                Text("Vibrations follow decoded audio, while Play is onscreen. Vocals emphasis is a frequency filter, not vocal isolation. Streaming formats that donâ€™t expose decoded PCM cannot drive haptics.")
                     .font(.caption).foregroundColor(.secondary)
             }
         }.navigationTitle("Music haptics")
