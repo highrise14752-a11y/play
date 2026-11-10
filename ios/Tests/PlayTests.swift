@@ -3,6 +3,91 @@ import XCTest
 @testable import Play
 
 final class PlayTests: XCTestCase {
+    @MainActor func testSystemPauseBypassesGuestControlsAndSurvivesSynchronization() async {
+        let player = PlaybackController(api: MusicAPI())
+        var controls: [String] = []
+        player.interceptControl = { action, _ in controls.append(action); return true }
+        player.suspendForSystemEvent()
+        XCTAssertTrue(player.isLocallySuspended)
+        XCTAssertTrue(controls.isEmpty)
+        player.synchronize(queue: [], position: 12, playing: true)
+        XCTAssertTrue(player.isLocallySuspended)
+        XCTAssertFalse(player.isPlaying)
+        player.resume()
+        XCTAssertFalse(player.isLocallySuspended)
+        XCTAssertEqual(controls, ["play"])
+    }
+
+    func testLargeSharedQueuesKeepCurrentSongInABoundedWindow() {
+        let queue = (0..<5000).map { Song(id: "song-\($0)", title: "Song", artist: "Artist") }
+        for index in [0, 2500, 4999] {
+            let window = TogetherQueue.window(queue, currentID: queue[index].id)
+            XCTAssertLessThanOrEqual(window.count, 200)
+            XCTAssertTrue(window.contains { $0.id == queue[index].id })
+            XCTAssertEqual(Set(window.map(\.id)).count, window.count)
+        }
+        XCTAssertTrue(TogetherQueue.window(queue, currentID: nil, limit: 0).isEmpty)
+        XCTAssertTrue(TogetherQueue.window([Song(id: "local:1", title: "Local", artist: "Artist")], currentID: "local:1").isEmpty)
+    }
+
+    func testSharedTrackValidationBoundsMetadataAndRejectsInvalidIDs() {
+        var track = TogetherTrack(Song(id: "khnokW3Mw24", title: "Song", artist: "Artist"))
+        track.title = String(repeating: "😀", count: 2000)
+        track.artists = [String(repeating: "Artist", count: 2000)]
+        track.thumbnailUrl = "file:///private/data"
+        track.durationSec = Int.max
+        let song = track.validatedSong
+        XCTAssertNotNil(song)
+        XCTAssertLessThanOrEqual(song!.title.utf8.count, 515)
+        XCTAssertLessThanOrEqual(song!.artist.utf8.count, 259)
+        XCTAssertNil(song!.artwork)
+        XCTAssertEqual(song!.duration, 259200)
+        track.id = "../../other"
+        XCTAssertNil(track.validatedSong)
+        let infinite = TogetherTrack(Song(id: "khnokW3Mw24", title: "Song", artist: "Artist", duration: .infinity))
+        XCTAssertEqual(infinite.durationSec, -1)
+    }
+
+    func testDurationMetadataSupportsLongSongsAndRejectsInvalidValues() {
+        XCTAssertEqual(MusicAPI.duration("5:38"), 338)
+        XCTAssertEqual(MusicAPI.duration("1:02:03"), 3723)
+        XCTAssertNil(MusicAPI.duration("Artist"))
+        XCTAssertNil(MusicAPI.duration("1:99"))
+        XCTAssertNil(MusicAPI.duration(":30"))
+    }
+
+    @MainActor func testLibraryPreservesAndReplacesDownloadsAndRemovesMissingFiles() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let library = LibraryStore(directory: root)
+        library.save(Song(id: "song", title: "Old", artist: "Artist", localFile: "old.m4a"))
+        let remote = Song(id: "song", title: "Updated", artist: "Artist")
+        library.save(remote)
+        XCTAssertEqual(library.saved(remote).localFile, "old.m4a")
+        library.save(Song(id: "song", title: "Updated", artist: "Artist", localFile: "new.m4a"))
+        XCTAssertEqual(library.saved(remote).localFile, "new.m4a")
+        let restored = LibraryStore(directory: root)
+        XCTAssertEqual(restored.saved(remote).localFile, "new.m4a")
+        restored.remove(remote)
+        XCTAssertFalse(restored.contains(remote))
+        XCTAssertNil(restored.error)
+    }
+
+    @MainActor func testInvalidDownloadPathCannotDeleteAnUnrelatedFile() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let library = LibraryStore(directory: root)
+        let unrelated = root.appendingPathComponent("keep.txt")
+        try Data("keep".utf8).write(to: unrelated)
+        let song = Song(id: "song", title: "Song", artist: "Artist", localFile: "../keep.txt")
+        library.save(song)
+        library.remove(song)
+        XCTAssertEqual(try Data(contentsOf: unrelated), Data("keep".utf8))
+        XCTAssertThrowsError(try DownloadFile.url(filename: "../keep.txt", directory: root))
+        XCTAssertThrowsError(try DownloadFile.url(filename: "/absolute.m4a", directory: root))
+        XCTAssertThrowsError(try DownloadFile.url(filename: "..\\file", directory: root))
+    }
+
     @MainActor func testTogetherHostAndGuestPerformRealWebSocketHandshake() async throws {
         let hostPlayer = PlaybackController(api: MusicAPI())
         let guestPlayer = PlaybackController(api: MusicAPI())

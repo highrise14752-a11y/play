@@ -32,6 +32,7 @@ final class PlaybackController: ObservableObject {
     private var resolving = false
     private var pendingPosition = 0.0
     private var pendingAutoplay = true
+    private(set) var isLocallySuspended = false
 
     init(api: MusicAPI) {
         self.api = api
@@ -66,8 +67,9 @@ final class PlaybackController: ObservableObject {
                 guard let self = self else { return }
                 if type == AVAudioSession.InterruptionType.began.rawValue {
                     self.resumeAfterInterruption = self.isPlaying
-                    self.player.pause()
+                    self.suspendForSystemEvent()
                 } else if self.resumeAfterInterruption && AVAudioSession.InterruptionOptions(rawValue: options).contains(.shouldResume) {
+                    self.resumeAfterInterruption = false
                     self.resume()
                 }
             }
@@ -75,7 +77,7 @@ final class PlaybackController: ObservableObject {
         notifications.append(NotificationCenter.default.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] note in
             let reason = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
             if reason == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue {
-                Task { @MainActor in self?.pause() }
+                Task { @MainActor in self?.suspendForSystemEvent() }
             }
         })
         configureRemoteCommands()
@@ -89,8 +91,9 @@ final class PlaybackController: ObservableObject {
         for (command, token) in remoteTargets { command.removeTarget(token) }
     }
 
-    func play(_ song: Song, queue: [Song], startAt: Double = 0, autoplay: Bool = true) {
+    func play(_ song: Song, queue: [Song], startAt: Double = 0, autoplay: Bool = true, preserveLocalSuspension: Bool = false) {
         if interceptSong?(song) == true { return }
+        if !preserveLocalSuspension { isLocallySuspended = false }
         loadTask?.cancel()
         lyricsTask?.cancel()
         requestID = UUID()
@@ -105,7 +108,7 @@ final class PlaybackController: ObservableObject {
         player.pause()
         player.replaceCurrentItem(with: nil)
         haptics.attach(to: nil)
-        resolving = true; pendingPosition = max(0, startAt); pendingAutoplay = autoplay
+        resolving = true; pendingPosition = max(0, startAt); pendingAutoplay = autoplay && !isLocallySuspended
         loading = true
         lyricsLoading = true
         updateNowPlaying()
@@ -123,12 +126,15 @@ final class PlaybackController: ObservableObject {
             do {
                 let url: URL
                 if let file = song.localFile {
-                    let local = LibraryStore.downloads.appendingPathComponent(file)
+                    let local = try DownloadFile.url(filename: file, directory: LibraryStore.downloads)
                     guard FileManager.default.fileExists(atPath: local.path) else {
                         throw PlayError.message("The downloaded file is missing. Import or download the song again.")
                     }
                     url = local
-                } else { url = try await self.api.stream(for: song) }
+                } else {
+                    guard !song.isLocal else { throw PlayError.message("Import this local audio file again before playing it.") }
+                    url = try await self.api.stream(for: song)
+                }
                 guard !Task.isCancelled, self.requestID == request else { return }
                 let audio = AVAudioSession.sharedInstance()
                 try audio.setCategory(.playback, mode: .default)
@@ -140,6 +146,7 @@ final class PlaybackController: ObservableObject {
                         if item.status == .failed {
                             self.error = item.error?.localizedDescription ?? "Could not play this audio."
                             self.loading = false
+                            self.resolving = false
                         }
                     }
                 }
@@ -167,10 +174,18 @@ final class PlaybackController: ObservableObject {
         pendingAutoplay = false; player.pause()
     }
     func resume() {
+        isLocallySuspended = false
         if interceptControl?("play", nil) == true { return }
         pendingAutoplay = true
         do { try AVAudioSession.sharedInstance().setActive(true); player.play() }
         catch { self.error = error.localizedDescription }
+    }
+    // Device events must always pause this device, even when the host owns controls.
+    func suspendForSystemEvent() {
+        isLocallySuspended = true
+        pendingAutoplay = false
+        player.pause()
+        haptics.setPlayback(playing: false)
     }
     func seek(_ seconds: Double) {
         guard seconds.isFinite else { return }
@@ -203,12 +218,12 @@ final class PlaybackController: ObservableObject {
     // Apply an authoritative room update without sending it back as a guest control.
     func synchronize(queue: [Song], position: Double, playing: Bool) {
         self.queue = queue
-        pendingPosition = max(0, position); pendingAutoplay = playing
+        pendingPosition = max(0, position); pendingAutoplay = playing && !isLocallySuspended
         guard !resolving else { return }
         if abs(self.position - position) > 0.8 {
             player.seek(to: CMTime(seconds: max(0, position), preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
         }
-        if playing { player.play() } else { player.pause() }
+        if pendingAutoplay { player.play() } else { player.pause() }
     }
 
     private func configureRemoteCommands() {

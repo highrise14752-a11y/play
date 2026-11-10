@@ -12,10 +12,29 @@ struct TogetherTrack: Codable {
     var durationSec: Int
     var thumbnailUrl: String?
     init(_ song: Song) {
-        id = song.id; title = song.title; artists = [song.artist]
-        durationSec = Int(song.duration ?? -1); thumbnailUrl = song.artwork?.absoluteString
+        id = song.id; title = Self.bounded(song.title, bytes: 512); artists = [Self.bounded(song.artist, bytes: 256)]
+        let length = song.duration ?? -1
+        durationSec = length.isFinite ? Int(min(259200, max(-1, length))) : -1
+        thumbnailUrl = song.artwork?.scheme == "https" && (song.artwork?.absoluteString.utf8.count ?? 0) <= 512 ? song.artwork?.absoluteString : nil
     }
     var song: Song { Song(id: id, title: title, artist: artists.joined(separator: ", "), artwork: thumbnailUrl.flatMap(URL.init(string:)), duration: durationSec > 0 ? Double(durationSec) : nil) }
+    var validatedSong: Song? {
+        guard id.utf8.count == 11, id.utf8.allSatisfy({ (65...90).contains($0) || (97...122).contains($0) || (48...57).contains($0) || $0 == 95 || $0 == 45 }) else { return nil }
+        let image = thumbnailUrl.flatMap(URL.init(string:)).flatMap { $0.scheme == "https" && $0.absoluteString.utf8.count <= 512 ? $0 : nil }
+        return Song(id: id, title: Self.bounded(title, bytes: 512), artist: Self.bounded(artists.prefix(6).joined(separator: ", "), bytes: 256),
+                    artwork: image, duration: durationSec > 0 ? Double(min(durationSec, 259200)) : nil)
+    }
+    private static func bounded(_ value: String, bytes: Int) -> String { String(decoding: value.utf8.prefix(bytes), as: UTF8.self) }
+}
+
+enum TogetherQueue {
+    static func window(_ queue: [Song], currentID: String?, limit: Int = 200) -> [Song] {
+        let songs = queue.filter { !$0.isLocal }
+        guard limit > 0 else { return [] }
+        let index = songs.firstIndex { $0.id == currentID } ?? 0
+        let start = max(0, index - min(20, limit - 1))
+        return Array(songs.dropFirst(start).prefix(limit))
+    }
 }
 struct TogetherParticipant: Codable, Identifiable {
     var id: String
@@ -92,6 +111,8 @@ final class TogetherSession: ObservableObject {
     private var applying = false
     private var guestControlsAllowed = false
     private var guestAddsAllowed = true
+    private var roomSendsInFlight = Set<UUID>()
+    private var lastResponse = 0.0
 
     init(player: PlaybackController) {
         self.player = player
@@ -169,6 +190,7 @@ final class TogetherSession: ObservableObject {
         for connection in active { connection.stateUpdateHandler = nil; connection.cancel() }
         let wasGuest = connected && !isHost
         connected = false; isHost = false; invite = nil; participants = []; clockOffset = nil
+        roomSendsInFlight = []
         guestControlsAllowed = false; guestAddsAllowed = true
         player.sharedSessionActive = false
         if wasGuest { applying = true; player.pause(); applying = false }
@@ -227,7 +249,11 @@ final class TogetherSession: ObservableObject {
         let type = message["type"] as? String ?? ""
         if isHost && type == "client_hello" {
             guard message["sessionId"] as? String == sessionID, message["sessionKey"] as? String == key,
-                  message["protocolVersion"] as? Int == 1, let client = message["clientId"] as? String, !client.isEmpty else { connection.cancel(); return }
+                  message["protocolVersion"] as? Int == 1, let client = message["clientId"] as? String, !client.isEmpty,
+                  client.utf8.count <= 128, client != participantID else { connection.cancel(); return }
+            for (oldID, identity) in identities where identity.id == client && oldID != id {
+                peers[oldID]?.cancel(); peers[oldID] = nil; identities[oldID] = nil
+            }
             let guest = TogetherParticipant(id: client, name: String((message["displayName"] as? String ?? "Listener").prefix(64)))
             identities[id] = guest
             send(["type": "server_welcome", "protocolVersion": 1, "sessionId": sessionID, "participantId": client, "role": "GUEST", "isPending": false,
@@ -241,12 +267,14 @@ final class TogetherSession: ObservableObject {
             participants = room.participants
             guestControlsAllowed = room.settings.allowGuestsToControlPlayback
             guestAddsAllowed = room.settings.allowGuestsToAddTracks
+            lastResponse = ProcessInfo.processInfo.systemUptime
             apply(room); return
         }
         guard message["sessionId"] as? String == sessionID else { return }
         if type == "server_welcome" && !isHost {
             participantID = message["participantId"] as? String ?? participantID
             connected = true; player.sharedSessionActive = true
+            lastResponse = ProcessInfo.processInfo.systemUptime
             status = (message["isPending"] as? Bool == true) ? "Waiting for host approval" : "Listening together"
             startTimer()
         } else if type == "heartbeat_ping" && isHost {
@@ -256,13 +284,17 @@ final class TogetherSession: ObservableObject {
                   let ping = message["pingId"] as? Int, ping == pendingPing,
                   let server = message["serverElapsedRealtimeMs"] as? Int {
             clockOffset = Double(server) - Double(ping + Self.now()) / 2
+            lastResponse = ProcessInfo.processInfo.systemUptime
         } else if type == "control_request" && isHost && allowGuestControls,
                   let action = message["action"] as? [String: Any] {
             control(action); broadcast()
         } else if type == "add_track_request" && isHost,
                   let track = message["track"], let bytes = try? JSONSerialization.data(withJSONObject: track),
-                  let song = try? JSONDecoder().decode(TogetherTrack.self, from: bytes), !song.song.isLocal {
-            player.enqueue(song.song, next: message["mode"] as? String == "PLAY_NEXT"); broadcast()
+                  let track = try? JSONDecoder().decode(TogetherTrack.self, from: bytes), let song = track.validatedSong {
+            guard player.queue.count < 500 else {
+                send(["type": "server_error", "sessionId": sessionID, "message": "The shared queue is full."], to: connection); return
+            }
+            player.enqueue(song, next: message["mode"] as? String == "PLAY_NEXT"); broadcast()
         } else if type == "server_error" {
             error = message["message"] as? String ?? "The host rejected that request."
         } else if type == "kick" || type == "ban" {
@@ -280,6 +312,9 @@ final class TogetherSession: ObservableObject {
                 guard let self = self else { return }
                 if self.isHost { self.broadcast() }
                 else if let connection = self.peers.values.first {
+                    if ProcessInfo.processInfo.systemUptime - self.lastResponse > 15 {
+                        self.error = "The host stopped responding."; self.leave(); return
+                    }
                     let now = Self.now(); self.pendingPing = now
                     self.send(["type": "heartbeat_ping", "sessionId": self.sessionID, "pingId": now, "clientElapsedRealtimeMs": now], to: connection)
                 }
@@ -287,7 +322,7 @@ final class TogetherSession: ObservableObject {
         }
     }
     private func broadcast() {
-        let songs = player.queue.filter { !$0.isLocal }
+        let songs = TogetherQueue.window(player.queue, currentID: player.current?.id)
         let hash = SHA256.hash(data: Data(songs.map(\.id).joined(separator: "|").utf8)).map { String(format: "%02x", $0) }.joined()
         let room = TogetherRoom(sessionId: sessionID, hostId: participantID, participants: participants,
                                 settings: TogetherSettings(allowGuestsToControlPlayback: allowGuestControls), queue: songs.map(TogetherTrack.init), queueHash: hash,
@@ -295,22 +330,28 @@ final class TogetherSession: ObservableObject {
                                 isPlaying: player.isPlaying, positionMs: Int(player.position * 1000), sentAtElapsedRealtimeMs: Self.now())
         struct Envelope: Encodable { let type = "room_state"; let state: TogetherRoom }
         guard let data = try? JSONEncoder().encode(Envelope(state: room)) else { return }
-        for (id, connection) in peers where identities[id] != nil { send(data, to: connection) }
+        guard data.count <= 262144 else { error = "The shared queue contains too much metadata."; return }
+        for (id, connection) in peers where identities[id] != nil && !roomSendsInFlight.contains(id) {
+            roomSendsInFlight.insert(id)
+            let context = NWConnection.ContentContext(identifier: "Play.Room", metadata: [NWProtocolWebSocket.Metadata(opcode: .text)])
+            connection.send(content: data, contentContext: context, isComplete: true, completion: .contentProcessed { [weak self] _ in
+                Task { @MainActor in self?.roomSendsInFlight.remove(id) }
+            })
+        }
     }
     private func apply(_ room: TogetherRoom) {
         guard room.queue.indices.contains(room.currentIndex) else {
             applying = true; player.pause(); applying = false; return
         }
-        let songs = room.queue.map(\.song)
-        let song = songs[room.currentIndex]
-        guard !song.isLocal else { return }
+        let songs = room.queue.prefix(500).compactMap(\.validatedSong)
+        guard let song = room.queue[room.currentIndex].validatedSong, songs.contains(where: { $0.id == song.id }) else { return }
         let elapsed = room.isPlaying && clockOffset != nil ? min(2500, max(0, Double(Self.now()) + (clockOffset ?? 0) - Double(room.sentAtElapsedRealtimeMs))) : 0
         let target = Double(room.positionMs) / 1000 + elapsed / 1000
         applying = true
         defer { applying = false }
         status = "Listening together"
         if player.current?.id != song.id {
-            player.play(song, queue: songs, startAt: target, autoplay: room.isPlaying)
+            player.play(song, queue: songs, startAt: target, autoplay: room.isPlaying, preserveLocalSuspension: true)
         } else {
             player.synchronize(queue: songs, position: target, playing: room.isPlaying)
         }

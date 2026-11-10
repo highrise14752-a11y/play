@@ -66,3 +66,13 @@ enum PlayError: LocalizedError {
     case message(String)
     var errorDescription: String? { if case .message(let text) = self { return text }; return nil }
 }
+
+enum DownloadFile {
+    static func url(filename: String, directory: URL) throws -> URL {
+        guard !filename.isEmpty, filename != ".", filename != "..",
+              !filename.contains("/"), !filename.contains("\\"), !filename.contains("\0") else {
+            throw PlayError.message("Invalid downloaded-file name.")
+        }
+        return directory.appendingPathComponent(filename)
+    }
+}

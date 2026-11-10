@@ -56,9 +56,10 @@ actor MusicAPI {
                     let renderer = thumb?["musicThumbnailRenderer"] as? [String: Any]
                     let image = renderer?["thumbnail"] as? [String: Any]
                     let thumbnails = image?["thumbnails"] as? [[String: Any]]
+                    let duration = runs(1).compactMap { ($0["text"] as? String).flatMap(Self.duration) }.last
                     if let id = id, !title.isEmpty, seen.insert(id).inserted {
                         songs.append(Song(id: id, title: title, artist: artist,
-                                          artwork: (thumbnails?.last?["url"] as? String).flatMap(URL.init(string:))))
+                                          artwork: (thumbnails?.last?["url"] as? String).flatMap(URL.init(string:)), duration: duration))
                     }
                     return
                 }
@@ -67,6 +68,14 @@ actor MusicAPI {
         }
         visit(json)
         return songs
+    }
+
+    static func duration(_ text: String) -> Double? {
+        let parts = text.split(separator: ":", omittingEmptySubsequences: false)
+        guard (2...3).contains(parts.count), parts.allSatisfy({ !$0.isEmpty && $0.allSatisfy(\.isNumber) }) else { return nil }
+        let numbers = parts.compactMap { Int($0) }
+        guard numbers.count == parts.count, numbers.dropFirst().allSatisfy({ $0 < 60 }) else { return nil }
+        return numbers.reduce(0.0) { $0 * 60 + Double($1) }
     }
 
     func stream(for song: Song) async throws -> URL {
@@ -88,7 +97,8 @@ actor MusicAPI {
         struct Record: Decodable { let duration: Double?; let syncedLyrics: String?; let plainLyrics: String? }
         let records = try JSONDecoder().decode([Record].self, from: data).sorted {
             if ($0.syncedLyrics != nil) != ($1.syncedLyrics != nil) { return $0.syncedLyrics != nil }
-            return abs(($0.duration ?? 0) - (song.duration ?? 0)) < abs(($1.duration ?? 0) - (song.duration ?? 0))
+            guard let duration = song.duration else { return false }
+            return abs(($0.duration ?? 0) - duration) < abs(($1.duration ?? 0) - duration)
         }
         guard let record = records.first else { return [] }
         return LyricsParser.parse(record.syncedLyrics ?? record.plainLyrics ?? "")

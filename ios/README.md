@@ -13,6 +13,8 @@ Native SwiftUI / AVPlayer application, alongside the existing Android app. Requi
 
 This is a first native iOS implementation, not full Android feature parity. Music Together currently supports local Wi-Fi invitations, not the upstream online room-code server. iOS haptics use an audio-frequency analyzer and Core Haptics rather than Android's vibrator APIs. Advanced audio effects, accounts, and lyric translation have not been ported. Lyrics retain the provider's language; English translation is not promised. Plain lyrics have no automatic timing. YouTube may change extraction behavior or restrict songs by region; playback errors are shown rather than an empty success state. Downloads initiated in the app need it to remain active until completion. Keep Play active or playing audio for local sessions; iOS may suspend inactive apps.
 
+Shared snapshots contain a window of at most 200 tracks around the current song. Slow peers have at most one room snapshot in flight; guest queue additions stop at 500 tracks. A guest pauses/disconnects after 15 seconds without a host response. System interruptions and headphone removal pause locally regardless of guest permissions; incoming sync cannot override that pause until the listener resumes. Saved-song lookup uses an ID index rather than repeatedly scanning the library while building a playback queue.
+
 ## Build on a Mac
 
 Install Xcode and XcodeGen, then run from the repository root:

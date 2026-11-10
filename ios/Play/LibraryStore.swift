@@ -12,28 +12,37 @@ final class LibraryStore: ObservableObject {
     lazy var together = TogetherSession(player: player)
     static let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     static let downloads = documents.appendingPathComponent("Downloads", isDirectory: true)
-    private let index = documents.appendingPathComponent("library.json")
+    private let index: URL
+    private let downloadDirectory: URL
+    private var songsByID: [String: Song] = [:]
 
-    init() {
+    init(directory: URL? = nil) {
+        let root = directory ?? Self.documents
+        index = root.appendingPathComponent("library.json")
+        downloadDirectory = root.appendingPathComponent("Downloads", isDirectory: true)
         let api = MusicAPI()
         self.api = api
         self.player = PlaybackController(api: api)
         do {
-            try FileManager.default.createDirectory(at: Self.downloads, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: downloadDirectory, withIntermediateDirectories: true)
             if FileManager.default.fileExists(atPath: index.path) {
                 songs = try JSONDecoder().decode([Song].self, from: Data(contentsOf: index))
             }
         } catch { self.error = "Could not load the saved library: \(error.localizedDescription)" }
+        var seen = Set<String>()
+        songs = songs.filter { seen.insert($0.id).inserted }
+        songsByID = Dictionary(uniqueKeysWithValues: songs.map { ($0.id, $0) })
     }
 
-    func contains(_ song: Song) -> Bool { songs.contains { $0.id == song.id } }
-    func saved(_ song: Song) -> Song { songs.first { $0.id == song.id } ?? song }
+    func contains(_ song: Song) -> Bool { songsByID[song.id] != nil }
+    func saved(_ song: Song) -> Song { songsByID[song.id] ?? song }
     func save(_ song: Song) {
         if let i = songs.firstIndex(where: { $0.id == song.id }) {
             var updated = song
-            updated.localFile = songs[i].localFile ?? song.localFile
+            updated.localFile = song.localFile ?? songs[i].localFile
             songs[i] = updated
         } else { songs.append(song) }
+        if let updated = songs.first(where: { $0.id == song.id }) { songsByID[song.id] = updated }
         persist()
     }
 
@@ -50,7 +59,7 @@ final class LibraryStore: ObservableObject {
             let temporary = try await api.download(stream)
             defer { try? FileManager.default.removeItem(at: temporary) }
             let name = UUID().uuidString + ".m4a"
-            let destination = Self.downloads.appendingPathComponent(name)
+            let destination = downloadDirectory.appendingPathComponent(name)
             try FileManager.default.moveItem(at: temporary, to: destination)
             var local = song
             local.localFile = name
@@ -64,7 +73,7 @@ final class LibraryStore: ObservableObject {
             defer { if accessed { url.stopAccessingSecurityScopedResource() } }
             do {
                 let name = UUID().uuidString + "." + url.pathExtension.lowercased()
-                let target = Self.downloads.appendingPathComponent(name)
+                let target = downloadDirectory.appendingPathComponent(name)
                 // Copy on a utility executor so large imports do not stall scrolling.
                 try await Task.detached(priority: .utility) {
                     try FileManager.default.copyItem(at: url, to: target)
@@ -80,11 +89,13 @@ final class LibraryStore: ObservableObject {
 
     func remove(_ song: Song) {
         if downloading.contains(song.id) { return }
-        if let file = saved(song).localFile {
-            do { try FileManager.default.removeItem(at: Self.downloads.appendingPathComponent(file)) }
-            catch { self.error = "Could not remove the audio file: \(error.localizedDescription)"; return }
+        if let file = saved(song).localFile, let url = try? DownloadFile.url(filename: file, directory: downloadDirectory) {
+            do {
+                if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
+            } catch { self.error = "Could not remove the audio file: \(error.localizedDescription)"; return }
         }
         songs.removeAll { $0.id == song.id }
+        songsByID[song.id] = nil
         persist()
     }
 
