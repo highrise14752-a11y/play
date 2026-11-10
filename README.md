@@ -29,6 +29,8 @@ The saved-download index initializes on an I/O thread rather than during screen/
 
 The optimized build uses Media3 and Guava’s bundled consumer rules rather than keeping their entire packages. R8 can remove unused library code and resources. The obsolete reflection-based offload helper, unused presence lifecycle dependency, and USB-exclusive/duplicate-preview paths from the haptics port have been removed.
 
+The excluded `kizzy` and `lastfm` modules were also deleted from the source tree (26 files, 1,471 lines); they were already absent from the APK build graph.
+
 ## Build
 
 Requires JDK 21, Android SDK 36, and Android Studio.
