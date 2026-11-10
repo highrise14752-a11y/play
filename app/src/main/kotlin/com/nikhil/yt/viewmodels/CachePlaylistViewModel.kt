@@ -35,7 +35,7 @@ class CachePlaylistViewModel @Inject constructor(
     private val database: MusicDatabase,
     @PlayerCache private val playerCache: Cache,
     @DownloadCache private val downloadCache: Cache,
-    private val downloadStorage: com.nikhil.yt.playback.DownloadStorage,
+    private val downloadStorage: dagger.Lazy<com.nikhil.yt.playback.DownloadStorage>,
 ) : ViewModel() {
 
     private val _cachedSongs = MutableStateFlow<List<Song>>(emptyList())
@@ -46,7 +46,7 @@ class CachePlaylistViewModel @Inject constructor(
             while (true) {
                 val hideExplicit = context.dataStore.get(HideExplicitKey, false)
                 val cachedIds = playerCache.keys.toSet()
-                val downloadedIds = downloadCache.keys.toSet() + downloadStorage.files.value.keys
+                val downloadedIds = downloadCache.keys.toSet() + downloadStorage.get().files.value.keys
                 val pureCacheIds = cachedIds.subtract(downloadedIds)
 
                 val songs = if (pureCacheIds.isNotEmpty()) {

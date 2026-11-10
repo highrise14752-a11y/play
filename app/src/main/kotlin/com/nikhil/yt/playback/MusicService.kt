@@ -67,6 +67,9 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.analytics.PlaybackStats
 import androidx.media3.exoplayer.analytics.PlaybackStatsListener
+import com.nikhil.yt.playback.haptics.*
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.common.TrackSelectionParameters.AudioOffloadPreferences
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.SilenceSkippingAudioProcessor
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -143,7 +146,6 @@ import com.nikhil.yt.extensions.directorySizeBytes
 import com.nikhil.yt.extensions.findNextMediaItemById
 import com.nikhil.yt.extensions.mediaItems
 import com.nikhil.yt.extensions.metadata
-import com.nikhil.yt.extensions.setOffloadEnabled
 import com.nikhil.yt.extensions.toMediaItem
 import com.nikhil.yt.extensions.toPersistQueue
 import com.nikhil.yt.extensions.toQueue
@@ -337,7 +339,7 @@ class MusicService :
     lateinit var downloadCache: Cache
 
     @Inject
-    lateinit var downloadStorage: DownloadStorage
+    lateinit var downloadStorage: dagger.Lazy<DownloadStorage>
 
     lateinit var player: ExoPlayer
     private lateinit var mediaSession: MediaLibrarySession
@@ -488,6 +490,9 @@ class MusicService :
         }
     }
 
+    @Inject lateinit var musicHapticsController: MusicHapticsController
+    private val musicHapticsTaps = mutableListOf<MusicHapticsAnalyzer>()
+
     override fun onCreate() {
         super.onCreate()
         ensureScopesActive()
@@ -533,8 +538,16 @@ class MusicService :
                     sleepTimer = SleepTimer(scope, this)
                     addListener(sleepTimer)
                     addAnalyticsListener(PlaybackStatsListener(false, this@MusicService))
-                    setOffloadEnabled(false)
                 }
+
+        musicHapticsController.registerPlayerTaps(player, musicHapticsTaps)
+        musicHapticsController.bindToPlayer(player)
+
+        dataStore.data.map { it.musicHapticsConfig() }.distinctUntilChanged()
+            .collectLatest(scope) { config ->
+                musicHapticsController.updateConfig(config)
+                updateAudioOffload(dataStore.get(AudioOffload, false))
+            }
 
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         setupAudioFocusRequest()
@@ -710,7 +723,7 @@ class MusicService :
                     ExoPlayer
                         .Builder(this)
                         .setMediaSourceFactory(createMediaSourceFactory())
-                        .setRenderersFactory(createRenderersFactory())
+                        .setRenderersFactory(createRenderersFactory(withHaptics = false))
                         .setHandleAudioBecomingNoisy(false)
                         .setWakeMode(C.WAKE_MODE_NETWORK)
                         .setAudioAttributes(
@@ -987,6 +1000,7 @@ class MusicService :
     }
 
     private fun handleDeviceMuteStateChanged() {
+        musicHapticsController.onIsPlayingChanged(player.isPlaying, if (isDeviceMutedNow()) 0f else player.volume)
         if (!pauseOnDeviceMuteEnabled || isTogetherGuestSession()) {
             wasAutoPausedByDeviceMute = false
             return
@@ -3425,6 +3439,17 @@ class MusicService :
 
 
     override fun onEvents(player: Player, events: Player.Events) {
+        if (events.contains(Player.EVENT_AUDIO_SESSION_ID)) {
+            musicHapticsController.onAudioSessionIdChanged(this.player.audioSessionId)
+        }
+        if (events.contains(Player.EVENT_POSITION_DISCONTINUITY)) {
+            musicHapticsController.onPositionDiscontinuity()
+        }
+        if (events.containsAny(Player.EVENT_IS_PLAYING_CHANGED, Player.EVENT_VOLUME_CHANGED,
+                Player.EVENT_DEVICE_VOLUME_CHANGED, Player.EVENT_DEVICE_INFO_CHANGED)) {
+            musicHapticsController.setCastingOrAutoActive(player.deviceInfo.playbackType == androidx.media3.common.DeviceInfo.PLAYBACK_TYPE_REMOTE)
+            musicHapticsController.onIsPlayingChanged(player.isPlaying, if (isDeviceMutedNow()) 0f else player.volume)
+        }
     val joined = togetherSessionState.value as? com.nikhil.yt.together.TogetherSessionState.Joined
     if (joined?.role is com.nikhil.yt.together.TogetherRole.Guest &&
         events.contains(Player.EVENT_PLAY_WHEN_READY_CHANGED)
@@ -3938,37 +3963,24 @@ class MusicService :
         )
 
     private fun updateAudioOffload(enabled: Boolean) {
-        runCatching {
-            val builder = player.trackSelectionParameters.buildUpon()
-            val audioOffloadPrefsClass = Class.forName("androidx.media3.common.AudioOffloadPreferences")
-            val audioOffloadPrefsBuilderClass = Class.forName("androidx.media3.common.AudioOffloadPreferences\$Builder")
-
-            val modeFieldName = if (enabled) "AUDIO_OFFLOAD_MODE_ENABLED" else "AUDIO_OFFLOAD_MODE_DISABLED"
-            val mode = audioOffloadPrefsClass.getField(modeFieldName).getInt(null)
-
-            val prefsBuilder = audioOffloadPrefsBuilderClass.getDeclaredConstructor().newInstance()
-            audioOffloadPrefsBuilderClass.getMethod("setAudioOffloadMode", Int::class.javaPrimitiveType).invoke(prefsBuilder, mode)
-            val prefs = audioOffloadPrefsBuilderClass.getMethod("build").invoke(prefsBuilder)
-
-            val setMethod =
-                builder.javaClass.methods.firstOrNull { method ->
-                    method.name == "setAudioOffloadPreferences" && method.parameterTypes.size == 1
-                }
-            if (setMethod != null) {
-                setMethod.invoke(builder, prefs)
-                player.trackSelectionParameters = builder.build()
-            }
-        }
-        player.setOffloadEnabled(enabled)
+        // Beat analysis needs decoded PCM, which hardware offload bypasses.
+        val effective = enabled && !musicHapticsController.config.value.enabled
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .setAudioOffloadPreferences(AudioOffloadPreferences.Builder()
+                .setAudioOffloadMode(if (effective) AudioOffloadPreferences.AUDIO_OFFLOAD_MODE_ENABLED
+                    else AudioOffloadPreferences.AUDIO_OFFLOAD_MODE_DISABLED)
+                .build())
+            .build()
     }
 
-    private fun createRenderersFactory() =
+    private fun createRenderersFactory(withHaptics: Boolean = true) =
         object : DefaultRenderersFactory(this) {
             override fun buildAudioSink(
                 context: Context,
                 enableFloatOutput: Boolean,
                 enableAudioTrackPlaybackParams: Boolean,
-            ) = DefaultAudioSink
+            ): AudioSink {
+                val sink = DefaultAudioSink
                 .Builder(this@MusicService)
                 .setEnableFloatOutput(enableFloatOutput)
                 .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
@@ -3984,6 +3996,10 @@ class MusicService :
                         SonicAudioProcessor(),
                     ),
                 ).build()
+                if (!withHaptics) return sink
+                val analyzer = musicHapticsController.createAnalyzer().also(musicHapticsTaps::add)
+                return HapticsAudioSink(sink, analyzer)
+            }
         }
 
     override fun onPlaybackStatsReady(
@@ -4193,6 +4209,7 @@ class MusicService :
 
 
     override fun onDestroy() {
+        musicHapticsController.release()
         super.onDestroy()
         unregisterBluetoothReceiver()
         try {

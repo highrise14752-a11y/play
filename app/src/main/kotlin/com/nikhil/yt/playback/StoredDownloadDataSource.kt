@@ -9,7 +9,7 @@ import androidx.media3.datasource.TransferListener
 
 /** Bypass both streaming caches for relocated audio; retain the existing streaming path otherwise. */
 class StoredDownloadDataSource(
-    private val storage: DownloadStorage,
+    private val storage: dagger.Lazy<DownloadStorage>,
     private val localFactory: DataSource.Factory,
     private val streamingFactory: DataSource.Factory,
 ) : DataSource {
@@ -20,7 +20,8 @@ class StoredDownloadDataSource(
         source?.addTransferListener(listener)
     }
     override fun open(dataSpec: DataSpec): Long {
-        val uri = storage.uriFor(dataSpec.key)
+        val store = storage.get()
+        val uri = store.uriFor(dataSpec.key)
         if (uri != null) {
             val local = localFactory.createDataSource()
             listeners.forEach(local::addTransferListener)
@@ -29,7 +30,7 @@ class StoredDownloadDataSource(
                 return local.open(dataSpec.withUri(uri))
             } catch (failure: Exception) {
                 runCatching { local.close() }
-                storage.reportUnavailable()
+                store.reportUnavailable()
                 // A removed SD card or revoked folder permission must not break online playback.
             }
         }
@@ -46,7 +47,7 @@ class StoredDownloadDataSource(
         try { source?.close() } finally { source = null }
     }
 
-    class Factory(context: Context, private val storage: DownloadStorage, private val streaming: DataSource.Factory) : DataSource.Factory {
+    class Factory(context: Context, private val storage: dagger.Lazy<DownloadStorage>, private val streaming: DataSource.Factory) : DataSource.Factory {
         private val local = DefaultDataSource.Factory(context)
         override fun createDataSource(): DataSource = StoredDownloadDataSource(storage, local, streaming)
     }

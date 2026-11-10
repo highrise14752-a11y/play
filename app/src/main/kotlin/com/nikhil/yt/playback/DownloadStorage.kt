@@ -94,7 +94,11 @@ class DownloadStorage @Inject constructor(
     }
 
     /** Capture the destination when a download starts, rather than moving old songs implicitly. */
+    fun hasCapturedLocation(download: Download): Boolean =
+        preferences.contains(targetKey(download)) && download.request.id !in pendingRemovals.value
+
     fun captureLocation(download: Download, target: String = location.value.id) {
+        if (hasCapturedLocation(download)) return
         val id = download.request.id
         val editor = preferences.edit()
         if (!preferences.contains(targetKey(download))) {

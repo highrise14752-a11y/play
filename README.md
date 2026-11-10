@@ -3,6 +3,8 @@
 
 # Play
 
+Music haptics are available under Settings → Player → Music haptics (off by default). The beat/vocal PCM analyser and haptic controller are adapted from [LastWave-Native](https://github.com/Clash-Projects/LastWave-Native/tree/6c1ad72/app/src/main/java/com/lastwave/app/playback/haptics), under GPL-3.0. Choose Whole Song, Bass & Beats, or Vocals Only; adjust intensity, engine and battery-saver behavior. “Vocals Only” follows midrange emphasis rather than isolating a vocal stem. Automatic uses Precision DSP; native Android haptics depend on device support. Audio offload is suspended while haptics are enabled and restored from the saved preference when disabled. The muted crossfade standby never generates pulses.
+
 An ad-free Android music client built with Kotlin and Jetpack Compose.
 </div>
 
@@ -22,6 +24,10 @@ Open **Settings → Storage → Downloaded songs → Change location** to choose
 If a card or folder is unavailable, Play keeps the download in its previous location and shows an error in Storage settings. Restore access and use **Move existing downloads** to retry. Removing a download also removes the file Play saved; clearing all downloads never deletes unrelated folder contents.
 
 This edition removes Discord, Last.fm/ListenBrainz integrations, Japanese/Korean lyric romanization, and the developer/donation/inspiration/community Discord cards. Original-language lyrics, lyric translation, and Music Together remain available.
+
+The saved-download index initializes on an I/O thread rather than during screen/service construction. Download metadata registration also runs independently of the UI and is skipped when already recorded. Home and Library visual effects remain unchanged.
+
+The optimized build uses Media3 and Guava’s bundled consumer rules rather than keeping their entire packages. R8 can remove unused library code and resources. The obsolete reflection-based offload helper, unused presence lifecycle dependency, and USB-exclusive/duplicate-preview paths from the haptics port have been removed.
 
 ## Build
 

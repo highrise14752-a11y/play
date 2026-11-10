@@ -57,9 +57,13 @@ constructor(
     val databaseProvider: DatabaseProvider,
     @DownloadCache val downloadCache: Cache,
     @PlayerCache val playerCache: Cache,
-    val storage: DownloadStorage,
+    private val storageProvider: dagger.Lazy<DownloadStorage>,
 ) {
+    val storage: DownloadStorage get() = storageProvider.get()
+    @Volatile private var initializedStorage: DownloadStorage? = null
     private val storageScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val metadataScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val pendingMetadata = mutableMapOf<String, Deferred<Unit>>()
     private val storageActions = Channel<suspend () -> Unit>(Channel.UNLIMITED)
     private val removedDownloads = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private val connectivityManager = context.getSystemService<ConnectivityManager>()!!
@@ -223,17 +227,20 @@ constructor(
                             registerThrottleSignal(finalException)
                         } else if (download.state == Download.STATE_COMPLETED) {
                             clearThrottleSignal()
-                            storageActions.trySend { storage.finishPending(download) }
+                            val metadata = pendingMetadataFor(download)
+                            storageActions.trySend {
+                                metadata?.await()
+                                storage.finishPending(download)
+                            }
                         }
                         if (download.state != Download.STATE_COMPLETED &&
                             download.state != Download.STATE_REMOVING) {
-                            val target = storage.location.value.id
-                            storage.captureLocation(download, target)
+                            captureLocationInBackground(download)
                         }
 
                         if (download.state == Download.STATE_REMOVING) {
                             removedDownloads.add(download.request.id)
-                            storage.markForRemoval(listOf(download.request.id))
+                            initializedStorage?.markForRemoval(listOf(download.request.id))
                         } else {
                             removedDownloads.remove(download.request.id)
                         }
@@ -246,9 +253,14 @@ constructor(
 
                     override fun onDownloadRemoved(downloadManager: DownloadManager, download: Download) {
                         removedDownloads.add(download.request.id)
-                        storage.markForRemoval(listOf(download.request.id))
+                        initializedStorage?.markForRemoval(listOf(download.request.id))
                         downloads.update { it - download.request.id }
-                        storageActions.trySend { storage.remove(download.request.id, download) }
+                        val metadata = pendingMetadataFor(download)
+                        storageActions.trySend {
+                            metadata?.await()
+                            storage.markForRemoval(listOf(download.request.id))
+                            storage.remove(download.request.id, download)
+                        }
                     }
                 }
             )
@@ -256,6 +268,8 @@ constructor(
 
     init {
         storageScope.launch {
+            // Loading SharedPreferences and the file index must never block UI/service creation.
+            initializedStorage = storageProvider.get()
             storage.recoverInterruptedTransfers()
             val pending = storage.pendingRemovalIds()
             withContext(Dispatchers.Main) { pending.forEach { downloadManager.removeDownload(it) } }
@@ -280,11 +294,37 @@ constructor(
                 if (download.request.id !in removedDownloads && download.request.id !in storage.pendingRemovalIds()) {
                     if (download.state == Download.STATE_COMPLETED) storageActions.trySend { storage.finishPending(download) }
                     else if (download.state != Download.STATE_REMOVING) {
-                        val target = storage.location.value.id
-                        storage.captureLocation(download, target)
+                        captureLocationInBackground(download)
                     }
                 }
             }
+        }
+    }
+
+    private fun metadataKey(download: Download) = "${download.request.id}.${download.startTimeMs}"
+
+    private fun pendingMetadataFor(download: Download): Deferred<Unit>? = synchronized(pendingMetadata) {
+        pendingMetadata[metadataKey(download)]
+    }
+
+    private fun captureLocationInBackground(download: Download) {
+        val ready = initializedStorage
+        if (ready?.hasCapturedLocation(download) == true) return
+        val target = ready?.location?.value?.id
+        val key = metadataKey(download)
+        synchronized(pendingMetadata) {
+            if (pendingMetadata.containsKey(key)) return
+            val task = metadataScope.async(start = CoroutineStart.LAZY) {
+                val store = storageProvider.get()
+                store.captureLocation(download, target ?: store.location.value.id)
+            }
+            pendingMetadata[key] = task
+            task.invokeOnCompletion {
+                synchronized(pendingMetadata) {
+                    if (pendingMetadata[key] === task) pendingMetadata.remove(key)
+                }
+            }
+            task.start()
         }
     }
 

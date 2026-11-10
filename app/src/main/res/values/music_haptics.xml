@@ -1,0 +1,11 @@
+<resources>
+    <string name="music_haptics">Music haptics</string>
+    <string name="music_haptics_description">Feel music through your phone’s vibration motor. Audio offload is suspended while enabled.</string>
+    <string name="music_haptics_unavailable">This device has no vibration motor.</string>
+    <string name="music_haptics_mode">Haptic mode</string>
+    <string name="music_haptics_intensity">Intensity</string>
+    <string name="music_haptics_engine">Haptic engine</string>
+    <string name="music_haptics_battery_saver">Pause haptics in battery saver</string>
+    <string name="music_haptics_test">Test vibration</string>
+    <string name="music_haptics_native_note">Automatic uses Precision DSP. Android Native may be silent on some devices; mode and intensity apply to Precision DSP.</string>
+</resources>

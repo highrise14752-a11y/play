@@ -292,6 +292,8 @@ fun PlayerSettings(
             onValueChange = onHistoryDurationChange,
         )
 
+        MusicHapticsSettings()
+
         CrossfadeSliderPreference(
             value = audioCrossfadeSeconds,
             onValueChange = onAudioCrossfadeSecondsChange,
