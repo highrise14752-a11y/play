@@ -15,32 +15,34 @@ final class LibraryStore: ObservableObject {
     static let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     static let downloads = documents.appendingPathComponent("Downloads", isDirectory: true)
     private let index: URL
+    private let durationIndex: URL
     private let downloadDirectory: URL
     private var songsByID: [String: Song] = [:]
 
     init(directory: URL? = nil) {
         let root = directory ?? Self.documents
         index = root.appendingPathComponent("library.json")
+        durationIndex = root.appendingPathComponent("durations.json")
         downloadDirectory = root.appendingPathComponent("Downloads", isDirectory: true)
         collections = UserCollections(directory: root)
         let api = MusicAPI()
         self.api = api
-        self.player = PlaybackController(api: api)
+        self.player = PlaybackController(api: api, downloadDirectory: downloadDirectory)
         player.onTrackStarted = { [weak collections] song in collections?.started(song) }
         player.onListeningTime = { [weak collections] seconds in collections?.listened(seconds) }
         player.onPaused = { [weak collections] in collections?.flush() }
         player.onDurationKnown = { [weak self] song in
             guard let self = self else { return }
-            if let duration = song.duration {
-                self.measuredDurations[song.id] = duration
-                if self.measuredDurations.count > 2000, let old = self.measuredDurations.keys.first(where: { $0 != song.id }) { self.measuredDurations[old] = nil }
-            }
-            if self.contains(song) { self.save(song) }
+            self.recordMeasuredDuration(song)
         }
         do {
             try FileManager.default.createDirectory(at: downloadDirectory, withIntermediateDirectories: true)
             if FileManager.default.fileExists(atPath: index.path) {
                 songs = try JSONDecoder().decode([Song].self, from: Data(contentsOf: index))
+            }
+            if let data = try? Data(contentsOf: durationIndex),
+               let cached = try? JSONDecoder().decode([String: Double].self, from: data) {
+                measuredDurations = Dictionary(uniqueKeysWithValues: cached.filter { $0.value.isFinite && $0.value > 0 }.prefix(2000).map { ($0.key, $0.value) })
             }
         } catch { self.error = "Could not load the saved library: \(error.localizedDescription)" }
         var seen = Set<String>()
@@ -55,6 +57,8 @@ final class LibraryStore: ObservableObject {
         return result
     }
     func save(_ song: Song) {
+        var song = song
+        song.duration = measuredDurations[song.id] ?? song.duration
         if let i = songs.firstIndex(where: { $0.id == song.id }) {
             var updated = song
             updated.localFile = song.localFile ?? songs[i].localFile
@@ -62,6 +66,18 @@ final class LibraryStore: ObservableObject {
         } else { songs.append(song) }
         if let updated = songs.first(where: { $0.id == song.id }) { songsByID[song.id] = updated }
         persist()
+    }
+
+    // Cache actual media lengths, including tracks not added to the library. Never
+    // resolve every search result: that would add network work while scrolling.
+    func recordMeasuredDuration(_ song: Song) {
+        guard let value = song.duration, value.isFinite, value > 0,
+              measuredDurations[song.id].map({ abs($0 - value) > 0.01 }) ?? true else { return }
+        measuredDurations[song.id] = value
+        if measuredDurations.count > 2000, let old = measuredDurations.keys.first(where: { $0 != song.id }) { measuredDurations[old] = nil }
+        if contains(song) { save(song) }
+        do { try JSONEncoder().encode(measuredDurations).write(to: durationIndex, options: .atomic) }
+        catch { self.error = "Could not save the measured song length: \(error.localizedDescription)" }
     }
 
     func play(_ song: Song, in queue: [Song]) {
@@ -75,6 +91,7 @@ final class LibraryStore: ObservableObject {
                 else { song.localFile = nil }
             }
             song.localFile = songsByID[song.id]?.localFile ?? song.localFile
+            song.duration = measuredDurations[song.id] ?? song.duration
             songsByID[song.id] = song
         }
         songs = songsByID.values.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
@@ -94,6 +111,8 @@ final class LibraryStore: ObservableObject {
             try FileManager.default.moveItem(at: temporary, to: destination)
             var local = song
             local.localFile = name
+            if let value = try? await AVURLAsset(url: destination).load(.duration).seconds,
+               value.isFinite, value > 0 { local.duration = value; recordMeasuredDuration(local) }
             save(local)
         } catch { self.error = "Download failed: \(error.localizedDescription)" }
     }

@@ -100,20 +100,25 @@ struct RootView: View {
     @Published private(set) var error: String?
     private var loaded = false
     private var loadedCategory: String?
+    private var loadedLocale = ""
     private var requestID = UUID()
     func load(api: MusicAPI, force: Bool = false) async {
-        if loaded && loadedCategory == category && !force { return }
+        let locale = (UserDefaults.standard.string(forKey: "content.language") ?? "en") + (UserDefaults.standard.string(forKey: "content.region") ?? "US")
+        if loaded && loadedCategory == category && loadedLocale == locale && !force { return }
         let id = UUID(); requestID = id
         loading = true; error = nil
         defer { if requestID == id { loading = false } }
         do {
             let results = try await api.home(category: category)
             guard !Task.isCancelled, requestID == id else { return }
-            songs = results; loaded = true; loadedCategory = category
+            songs = results; loaded = true; loadedCategory = category; loadedLocale = locale
         } catch {
             if !Task.isCancelled && requestID == id { self.error = error.localizedDescription }
         }
     }
+    #if DEBUG
+    func loadPreview() { songs = UISampleData.songs; loading = false }
+    #endif
 }
 
 struct CategoryChips: View {
@@ -203,7 +208,7 @@ struct HomeView: View {
         }.refreshable { await feed.load(api: library.api, force: true) }
         .task(id: feed.category) {
             #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("-uiTesting") { return }
+            if ProcessInfo.processInfo.arguments.contains("-uiTesting") { feed.loadPreview(); return }
             #endif
             await feed.load(api: library.api)
         }

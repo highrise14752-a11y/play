@@ -124,6 +124,33 @@ final class PlayTests: XCTestCase {
         XCTAssertNil(MusicAPI.duration("Artist"))
         XCTAssertNil(MusicAPI.duration("1:99"))
         XCTAssertNil(MusicAPI.duration(":30"))
+        XCTAssertEqual(MusicAPI.duration(" 6:10 "), 370)
+        XCTAssertNil(MusicAPI.duration("LIVE"))
+        XCTAssertNil(MusicAPI.duration("-1:20"))
+    }
+
+    func testDurationUsesEachTracksOwnColumnAndQueueLength() throws {
+        let json = #"[{"musicResponsiveListItemRenderer":{"playlistItemData":{"videoId":"first"},"flexColumns":[{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"First"}]}}},{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Artist"},{"text":"5:38"}]}}}]}},{"musicResponsiveListItemRenderer":{"playlistItemData":{"videoId":"second"},"flexColumns":[{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Second"}]}}}],"fixedColumns":[{"musicResponsiveListItemFixedColumnRenderer":{"text":{"simpleText":"6:10"}}}]}},{"playlistPanelVideoRenderer":{"videoId":"third","title":{"simpleText":"Third"},"shortBylineText":{"runs":[{"text":"Artist"}]},"lengthText":{"simpleText":"1:02:03"}}},{"musicTwoRowItemRenderer":{"navigationEndpoint":{"watchEndpoint":{"videoId":"fourth"}},"title":{"runs":[{"text":"Fourth"}]},"subtitle":{"runs":[{"text":"Artist"},{"text":"LIVE"}]}}}]"#
+        let songs = MusicAPI.parseSearch(try JSONSerialization.jsonObject(with: Data(json.utf8)))
+        XCTAssertEqual(songs.map(\.duration), [338, 370, 3723, nil])
+    }
+
+    @MainActor func testMeasuredDurationSurvivesRestartAndStaleCatalogOrBackup() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let library = LibraryStore(directory: root)
+        let stale = Song(id: "song", title: "Song", artist: "Artist", duration: 180)
+        var actual = stale; actual.duration = 245.97
+        library.recordMeasuredDuration(actual)
+        XCTAssertFalse(library.contains(stale))
+        let restored = LibraryStore(directory: root)
+        XCTAssertEqual(restored.saved(stale).duration, 245.97)
+        restored.save(stale)
+        restored.merge([stale])
+        XCTAssertEqual(restored.songs.first?.duration, 245.97)
+        var invalid = stale; invalid.duration = .nan
+        restored.recordMeasuredDuration(invalid)
+        XCTAssertEqual(restored.saved(stale).duration, 245.97)
     }
 
     @MainActor func testLibraryPreservesAndReplacesDownloadsAndRemovesMissingFiles() async throws {

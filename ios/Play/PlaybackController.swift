@@ -30,6 +30,7 @@ final class PlaybackController: ObservableObject {
     var interceptEnqueue: ((Song, Bool) -> Bool)?
     var sharedSessionActive = false
     private let api: MusicAPI
+    private let downloadDirectory: URL
     private let player = AVPlayer()
     private var timeObserver: Any?
     private var statusObserver: NSKeyValueObservation?
@@ -49,8 +50,9 @@ final class PlaybackController: ObservableObject {
     private var sleepTask: Task<Void, Never>?
     private var playedHistory: [Song] = []
 
-    init(api: MusicAPI) {
+    init(api: MusicAPI, downloadDirectory: URL? = nil) {
         self.api = api
+        self.downloadDirectory = downloadDirectory ?? LibraryStore.downloads
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.1, preferredTimescale: 600), queue: .main) { [weak self] time in
             Task { @MainActor in
                 guard let self = self else { return }
@@ -130,7 +132,8 @@ final class PlaybackController: ObservableObject {
         lyricsTask?.cancel()
         requestID = UUID()
         let request = requestID
-        let allowed = sharedSessionActive ? queue.filter { !$0.isLocal } : queue
+        var seen = Set<String>()
+        let allowed = queue.filter { (!sharedSessionActive || !$0.isLocal) && seen.insert($0.id).inserted }
         self.queue = allowed.contains(where: { $0.id == song.id }) ? allowed : [song]
         current = song
         lyrics = []
@@ -159,7 +162,7 @@ final class PlaybackController: ObservableObject {
             do {
                 let url: URL
                 if let file = song.localFile {
-                    let local = try DownloadFile.url(filename: file, directory: LibraryStore.downloads)
+                    let local = try DownloadFile.url(filename: file, directory: self.downloadDirectory)
                     guard FileManager.default.fileExists(atPath: local.path) else {
                         throw PlayError.message("The downloaded file is missing. Import or download the song again.")
                     }
@@ -285,9 +288,10 @@ final class PlaybackController: ObservableObject {
     func moveQueue(from: IndexSet, to: Int) {
         guard interceptControl?("edit_queue", nil) != true else { return }
         var updated = queue
-        let selected = from.sorted().map { updated[$0] }
-        let insertion = to - from.filter { $0 < to }.count
-        updated = updated.enumerated().filter { !from.contains($0.offset) }.map(\.element)
+        let valid = from.filter { updated.indices.contains($0) }
+        let selected = valid.sorted().map { updated[$0] }
+        let insertion = to - valid.filter { $0 < to }.count
+        updated = updated.enumerated().filter { !valid.contains($0.offset) }.map(\.element)
         updated.insert(contentsOf: selected, at: max(0, min(updated.count, insertion)))
         queue = updated
     }

@@ -50,8 +50,23 @@ actor MusicAPI {
     static func parseSearch(_ json: Any) -> [Song] {
         var songs: [Song] = []
         var seen = Set<String>()
+        func text(_ value: Any?) -> String {
+            guard let value = value as? [String: Any] else { return "" }
+            return value["simpleText"] as? String ?? (value["runs"] as? [[String: Any]] ?? []).compactMap { $0["text"] as? String }.joined()
+        }
         func visit(_ value: Any) {
             if let dictionary = value as? [String: Any] {
+                if let row = dictionary["playlistPanelVideoRenderer"] as? [String: Any], let id = row["videoId"] as? String {
+                    let name = text(row["title"])
+                    let image = row["thumbnail"] as? [String: Any]
+                    let images = image?["thumbnails"] as? [[String: Any]] ?? []
+                    if !name.isEmpty, seen.insert(id).inserted {
+                        songs.append(Song(id: id, title: name, artist: text(row["shortBylineText"]),
+                                          artwork: (images.last?["url"] as? String).flatMap(URL.init(string:)),
+                                          duration: Self.duration(text(row["lengthText"]))))
+                    }
+                    return
+                }
                 if let row = dictionary["musicTwoRowItemRenderer"] as? [String: Any],
                    let endpoint = row["navigationEndpoint"] as? [String: Any],
                    let watch = endpoint["watchEndpoint"] as? [String: Any], let id = watch["videoId"] as? String {
@@ -66,7 +81,8 @@ actor MusicAPI {
                     let name = titleRuns.compactMap { $0["text"] as? String }.joined()
                     if !name.isEmpty, seen.insert(id).inserted {
                         songs.append(Song(id: id, title: name, artist: artistRuns.first?["text"] as? String ?? "Unknown artist",
-                                          artwork: (images.last?["url"] as? String).flatMap(URL.init(string:))))
+                                          artwork: (images.last?["url"] as? String).flatMap(URL.init(string:)),
+                                          duration: artistRuns.compactMap { ($0["text"] as? String).flatMap(Self.duration) }.last))
                     }
                     return
                 }
@@ -91,13 +107,11 @@ actor MusicAPI {
                     let renderer = thumb?["musicThumbnailRenderer"] as? [String: Any]
                     let image = renderer?["thumbnail"] as? [String: Any]
                     let thumbnails = image?["thumbnails"] as? [[String: Any]]
-                    let duration = runs(1).compactMap { ($0["text"] as? String).flatMap(Self.duration) }.last
+                    let duration = columns.indices.dropFirst().flatMap { runs($0) }.compactMap { ($0["text"] as? String).flatMap(Self.duration) }.last
                     let fixed = row["fixedColumns"] as? [[String: Any]] ?? []
                     let fixedDuration = fixed.compactMap { column -> Double? in
                         let renderer = column["musicResponsiveListItemFixedColumnRenderer"] as? [String: Any]
-                        let text = renderer?["text"] as? [String: Any]
-                        let runs = text?["runs"] as? [[String: Any]] ?? []
-                        return runs.compactMap { ($0["text"] as? String).flatMap(Self.duration) }.first
+                        return Self.duration(text(renderer?["text"]))
                     }.first
                     let albumRun = runs(1).first { run in
                         let nav = run["navigationEndpoint"] as? [String: Any]
@@ -123,7 +137,7 @@ actor MusicAPI {
     }
 
     static func duration(_ text: String) -> Double? {
-        let parts = text.split(separator: ":", omittingEmptySubsequences: false)
+        let parts = text.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: ":", omittingEmptySubsequences: false)
         guard (2...3).contains(parts.count), parts.allSatisfy({ !$0.isEmpty && $0.allSatisfy(\.isNumber) }) else { return nil }
         let numbers = parts.compactMap { Int($0) }
         guard numbers.count == parts.count, numbers.dropFirst().allSatisfy({ $0 < 60 }) else { return nil }

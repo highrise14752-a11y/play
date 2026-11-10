@@ -1,0 +1,11 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Debug-only real catalog fixtures for screenshot tests. Excluded from Release code.
+#if DEBUG
+import Foundation
+enum UISampleData {
+    static let songs: [Song] = {
+        let json = #"[{"id":"khnokW3Mw24","title":"Instant Crush (feat. Julian Casablancas)","artist":"Daft Punk","artwork":"https://yt3.googleusercontent.com/N55arCGj69gtw6thXK8JUPisxoVYiwuIEQ7I6SGlkEyNcSJ7xIWPe76Vuu1SiUqRyx5w9qvR_zV8fV3CWQ=w120-h120-l90-rj","duration":338},{"id":"4D7u5KF7SP8","title":"Get Lucky (feat. Pharrell Williams and Nile Rodgers)","artist":"Daft Punk","artwork":"https://yt3.googleusercontent.com/N55arCGj69gtw6thXK8JUPisxoVYiwuIEQ7I6SGlkEyNcSJ7xIWPe76Vuu1SiUqRyx5w9qvR_zV8fV3CWQ=w120-h120-l90-rj","duration":370},{"id":"qe8Q7mjxjig","title":"Veridis Quo","artist":"Daft Punk","artwork":"https://yt3.googleusercontent.com/KWKJfEfasVPd53ha--VXKCrjQPtCYMbjtTAg25IhmODgYDud5bqPgZXwzaLY4Mhq1MTEjjvyFRbLSuw=w120-h120-l90-rj","duration":346},{"id":"a7Wask21bew","title":"Derezzed (From \"TRON: Legacy\"/Score)","artist":"Daft Punk","artwork":"https://yt3.googleusercontent.com/wY7kATQ2X8UkxWku6-JuLMCfjoIP4V5Mc9B24wV_bNcombU5iOTEPIgRax9iuIpgGcBbsTuF2lhsSyPO=w120-h120-l90-rj","duration":105},{"id":"d7woYjGWs6k","title":"Da Funk","artist":"Daft Punk","artwork":"https://yt3.googleusercontent.com/1gXa4i8m_NecS7xNqLqzxy6rdOWBh_L6U91YYv5ULNdmvvYT1Pr6ld7_SyUs5L52pEQheVyfU9SnXUm9=w120-h120-l90-rj","duration":329},{"id":"iU7oF4OXZSE","title":"Lose Yourself to Dance (feat. Pharrell Williams)","artist":"Daft Punk","artwork":"https://yt3.googleusercontent.com/N55arCGj69gtw6thXK8JUPisxoVYiwuIEQ7I6SGlkEyNcSJ7xIWPe76Vuu1SiUqRyx5w9qvR_zV8fV3CWQ=w120-h120-l90-rj","duration":354},{"id":"qPRNIHxLhmc","title":"I Feel It Coming (feat. Daft Punk)","artist":"The Weeknd","artwork":"https://yt3.googleusercontent.com/dcxXIIlest09vnvKznWM9VWQXu1EL7lKxBzXGzwgmVjmMNBm1dEWT_0qn1xrEZYyKF_qRE1TLq8P_JY_mQ=w120-h120-l90-rj","duration":270},{"id":"-xFur30vvVc","title":"Touch (2021 Epilogue) (feat. Paul Williams)","artist":"Daft Punk","artwork":"https://yt3.googleusercontent.com/R5gMfIj_BHfnfJv_X24gjqUskPT9gwonal56ydS9bIkxsHxaaebzNwHjbIruM54pvcMwcI9PpTJpYPAJ=w120-h120-l90-rj","duration":180}]"#
+        return (try? JSONDecoder().decode([Song].self, from: Data(json.utf8))) ?? []
+    }()
+}
+#endif
