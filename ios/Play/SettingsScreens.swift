@@ -636,17 +636,20 @@ struct BackupSettingsView: View {
     @State private var exporting = false
     @State private var importing = false
     @State private var status: String?
+    @State private var restoring = false
     var body: some View {
         Form {
             Button("Create backup") { collections.flush(); exporting = true }
-            Button("Restore backup") { importing = true }
+            Button("Restore backup") { importing = true }.disabled(restoring)
             Text("Backs up your library, playlists, favorites, history and stats. Audio files stay on this device. Restoring merges with existing data.").font(.caption).foregroundColor(.secondary)
+            Text("Restore also accepts a Play backup from Android. It imports online songs, playlists, favorites, and listening history.").font(.caption).foregroundColor(.secondary)
+            if restoring { ProgressView("Reading backup…") }
             if let status = status { Text(status).font(.caption) }
         }.navigationTitle("Backup and restore").navigationBarTitleDisplayMode(.inline)
             .fileExporter(isPresented: $exporting, document: BackupDocument(backup: PlayBackup(songs: library.songs, collections: collections.state)), contentType: .json, defaultFilename: "Play-backup") { result in
                 if case .failure(let error) = result { status = error.localizedDescription }
             }
-            .fileImporter(isPresented: $importing, allowedContentTypes: [.json]) { result in
+            .fileImporter(isPresented: $importing, allowedContentTypes: [.data]) { result in
                 switch result {
                 case .success(let url): Task { await restore(url) }
                 case .failure(let error): status = error.localizedDescription
@@ -654,10 +657,18 @@ struct BackupSettingsView: View {
             }
     }
     private func restore(_ url: URL) async {
+        guard !restoring else { return }
+        restoring = true
+        status = nil
+        defer { restoring = false }
         let access = url.startAccessingSecurityScopedResource()
         defer { if access { url.stopAccessingSecurityScopedResource() } }
         do {
             let backup = try await Task.detached(priority: .utility) {
+                let handle = try FileHandle(forReadingFrom: url)
+                defer { try? handle.close() }
+                let signature = try handle.read(upToCount: 4) ?? Data()
+                if signature == Data([0x50, 0x4b, 0x03, 0x04]) { return try AndroidBackup.read(url) }
                 let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
                 guard size <= 16 * 1024 * 1024 else { throw PlayError.message("Backup is too large.") }
                 let decoded = try JSONDecoder().decode(PlayBackup.self, from: Data(contentsOf: url))

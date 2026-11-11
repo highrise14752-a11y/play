@@ -10,6 +10,9 @@ settings:
     CURRENT_PROJECT_VERSION: '3'
     CODE_SIGNING_ALLOWED: 'NO'
 packages:
+  ZIPFoundation:
+    url: https://github.com/weichsel/ZIPFoundation.git
+    exactVersion: '0.9.20'
   YouTubeKit:
     url: https://github.com/alexeichhorn/YouTubeKit.git
     revision: 7f75a2299dc329c0b7855afb25d47663a02855cb
@@ -20,6 +23,8 @@ targets:
     sources: [Play]
     dependencies:
       - package: YouTubeKit
+      - package: ZIPFoundation
+      - sdk: libsqlite3.tbd
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.highrise14752.play
@@ -53,7 +58,11 @@ targets:
   PlayTests:
     type: bundle.unit-test
     platform: iOS
-    sources: [Tests]
+    sources:
+      - path: Tests
+        excludes: [Fixtures]
+      - path: Tests/Fixtures
+        buildPhase: resources
     dependencies:
       - target: Play
   PlayUITests:

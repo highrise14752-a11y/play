@@ -5,6 +5,23 @@ import UIKit
 @testable import Play
 
 final class PlayTests: XCTestCase {
+    func testAndroidBackupImportsOnlineLibraryInPlaylistOrder() throws {
+        let file = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "AndroidSample", withExtension: "backup"))
+        let zone = try XCTUnwrap(TimeZone(secondsFromGMT: 19_800))
+        let backup = try AndroidBackup.read(file, timeZone: zone)
+        let first = try XCTUnwrap(backup.songs.first { $0.id == "khnokW3Mw24" })
+        XCTAssertEqual(backup.songs.count, 2)
+        XCTAssertEqual(first.artist, "Test artist")
+        XCTAssertEqual(first.duration, 338)
+        XCTAssertEqual(first.album, "Test album")
+        XCTAssertEqual(backup.collections.likedIDs, ["khnokW3Mw24"])
+        XCTAssertEqual(backup.collections.playlists.first?.songIDs, ["4D7u5KF7SP8", "khnokW3Mw24"])
+        XCTAssertEqual(backup.collections.playlists.first?.tags, ["Focus"])
+        XCTAssertEqual(backup.collections.history.first?.startedAt.timeIntervalSince1970, 1_710_000_100 - 19_800)
+        XCTAssertEqual(backup.collections.totals[first.id]?.seconds, 70)
+        XCTAssertEqual(backup.collections.totals[first.id]?.plays, 2)
+    }
+
     func testLyricTranslationKeepsLineBoundariesAndRejectsMergedLines() throws {
         let response = #"[[["Hello\n","Bonjour\n"],["I am here","Je suis ici"]],null,"fr"]"#
         let data = Data(response.utf8)
