@@ -19,6 +19,88 @@ final class PlayTests: XCTestCase {
         XCTAssertEqual(LyricSource.ordered(enabled: [.lrcLib, .better, .kuGou], preferred: .better), [.better, .lrcLib, .kuGou])
     }
 
+    func testCatalogLinksAcceptYouTubeHostsAndRejectLookalikeURLs() {
+        XCTAssertEqual(CatalogLink.parse("https://youtu.be/khnokW3Mw24?t=20"), .song("khnokW3Mw24"))
+        XCTAssertEqual(CatalogLink.parse("https://music.youtube.com/playlist?list=PL123"), .playlist("PL123"))
+        XCTAssertEqual(CatalogLink.parse("play://song?v=khnokW3Mw24"), .song("khnokW3Mw24"))
+        XCTAssertNil(CatalogLink.parse("https://music.youtube.com.example.net/watch?v=khnokW3Mw24"))
+        XCTAssertNil(CatalogLink.parse("https://www.youtube.com/watch?v=abc%2F1234567"))
+    }
+
+    func testFilesCopyNameCannotEscapeTheChosenFolder() throws {
+        let song = Song(id: "1", title: "../" + String(repeating: "音", count: 100), artist: "A/B")
+        let folder = URL(fileURLWithPath: "/target")
+        let source = URL(fileURLWithPath: "/private/track.m4a")
+        let name = DownloadFolder.fileName(for: song, source: source)
+        let output = try DownloadFile.url(filename: name, directory: folder)
+        XCTAssertEqual(output.deletingLastPathComponent().path, folder.path)
+        XCTAssertTrue(name.hasSuffix("track.m4a"))
+        XCTAssertLessThan(name.utf8.count, 255)
+    }
+
+    @MainActor func testHistoryCountsOnlyTracksReachingTheListeningThreshold() throws {
+        let defaults = UserDefaults.standard
+        let keys = ["privacy.pauseHistory", "player.historyMinimum"]
+        let old = keys.map { defaults.object(forKey: $0) }
+        defaults.set(false, forKey: keys[0])
+        defaults.set(2.0, forKey: keys[1])
+        defer { for (key, value) in zip(keys, old) { defaults.set(value, forKey: key) } }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let collections = UserCollections(directory: root)
+        let skipped = Song(id: "skip", title: "Skipped", artist: "Artist")
+        let played = Song(id: "play", title: "Played", artist: "Artist")
+        collections.started(skipped)
+        collections.listened(1)
+        XCTAssertTrue(collections.state.history.isEmpty)
+        collections.started(played)
+        collections.listened(1.25)
+        collections.listened(1)
+        XCTAssertEqual(collections.state.history.map(\.song.id), [played.id])
+        XCTAssertEqual(collections.state.totals[played.id]?.seconds, 2.25)
+    }
+
+    @MainActor func testTogetherApprovalAndBanOverWebSocket() async throws {
+        let host = TogetherSession(player: PlaybackController(api: MusicAPI()))
+        let guest = TogetherSession(player: PlaybackController(api: MusicAPI()))
+        defer { guest.leave(); host.leave() }
+        host.requireApproval = true
+        host.host(name: "Host", addressOverride: "127.0.0.1")
+        for _ in 0..<100 {
+            if host.invite != nil { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let invite = try XCTUnwrap(host.invite)
+        guest.join(link: invite, name: "Guest")
+        for _ in 0..<100 {
+            if guest.status == "Waiting for host approval" && host.participants.count == 2 { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertEqual(guest.status, "Waiting for host approval")
+        let member = try XCTUnwrap(host.participants.first { !$0.isHost })
+        XCTAssertTrue(member.isPending)
+        host.decide(member, approved: true)
+        for _ in 0..<100 {
+            if guest.participants.contains(where: { $0.id == member.id && !$0.isPending }) { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertEqual(guest.status, "Listening together")
+        XCTAssertTrue(guest.participants.contains(where: { $0.id == member.id && !$0.isPending }))
+        host.remove(member, ban: true)
+        for _ in 0..<100 {
+            if !guest.connected { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertFalse(guest.connected)
+        guest.join(link: invite, name: "Guest")
+        for _ in 0..<100 {
+            if guest.error != nil { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertTrue(guest.error?.contains("blocked") == true)
+        XCTAssertEqual(host.participants.count, 1)
+    }
+
     @MainActor func testRestoredQueueStaysPausedAndKeepsPosition() throws {
         let defaults = UserDefaults.standard
         let old = defaults.object(forKey: "player.persistentQueue")
@@ -66,8 +148,13 @@ final class PlayTests: XCTestCase {
 
     @MainActor func testPlaylistLikesHistoryAndBackupPersistence() async throws {
         let previous = UserDefaults.standard.object(forKey: "privacy.pauseHistory")
+        let minimum = UserDefaults.standard.object(forKey: "player.historyMinimum")
         UserDefaults.standard.set(false, forKey: "privacy.pauseHistory")
-        defer { UserDefaults.standard.set(previous, forKey: "privacy.pauseHistory") }
+        UserDefaults.standard.set(0.0, forKey: "player.historyMinimum")
+        defer {
+            UserDefaults.standard.set(previous, forKey: "privacy.pauseHistory")
+            UserDefaults.standard.set(minimum, forKey: "player.historyMinimum")
+        }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let collections = UserCollections(directory: root)

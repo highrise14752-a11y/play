@@ -191,6 +191,7 @@ final class PlaybackController: ObservableObject {
         if !retrying { failedTracks.removeAll() }
         deferredItem = false
         mutedPause = false
+        lastSkip = .distantPast
         loadTask?.cancel()
         lyricsTask?.cancel()
         requestID = UUID()
@@ -378,6 +379,7 @@ final class PlaybackController: ObservableObject {
         if current == nil { play(song, queue: [song]); return }
         if next, let index = queue.firstIndex(where: { $0.id == current?.id }) { queue.insert(song, at: index + 1) }
         else { queue.append(song) }
+        persistQueue()
     }
 
     func setRepeat(_ mode: PlayRepeatMode) {
@@ -398,6 +400,7 @@ final class PlaybackController: ObservableObject {
         guard interceptControl?("edit_queue", nil) != true else { return }
         let active = current?.id
         queue = queue.enumerated().filter { !offsets.contains($0.offset) || $0.element.id == active }.map(\.element)
+        persistQueue()
     }
     func moveQueue(from: IndexSet, to: Int) {
         guard interceptControl?("edit_queue", nil) != true else { return }
@@ -408,6 +411,7 @@ final class PlaybackController: ObservableObject {
         updated = updated.enumerated().filter { !valid.contains($0.offset) }.map(\.element)
         updated.insert(contentsOf: selected, at: max(0, min(updated.count, insertion)))
         queue = updated
+        persistQueue()
     }
     func setSleepTimer(minutes: Double?) {
         sleepTask?.cancel(); sleepDeadline = nil; stopAtTrackEnd = false
@@ -423,6 +427,10 @@ final class PlaybackController: ObservableObject {
 
     // Apply an authoritative room update without sending it back as a guest control.
     func synchronize(queue: [Song], position: Double, playing: Bool) {
+        if deferredItem, let song = current {
+            play(song, queue: queue, startAt: position, autoplay: playing, preserveLocalSuspension: true)
+            return
+        }
         self.queue = queue
         pendingPosition = max(0, position); pendingAutoplay = playing && !isLocallySuspended
         guard !resolving else { return }

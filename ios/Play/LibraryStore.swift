@@ -154,7 +154,27 @@ final class LibraryStore: ObservableObject {
             if let value = try? await AVURLAsset(url: destination).load(.duration).seconds,
                value.isFinite, value > 0 { local.duration = value; recordMeasuredDuration(local) }
             save(local)
+            if let bookmark = UserDefaults.standard.data(forKey: DownloadFolder.bookmarkKey) {
+                do {
+                    try await DownloadFolder.copy([(destination, DownloadFolder.fileName(for: local, source: destination))], bookmark: bookmark)
+                } catch {
+                    self.error = "The song was saved in Play. Could not copy it to Files: \(error.localizedDescription)"
+                }
+            }
         } catch { self.error = "Download failed: \(error.localizedDescription)" }
+    }
+
+    func copyDownloadsToFiles() async throws {
+        guard let bookmark = UserDefaults.standard.data(forKey: DownloadFolder.bookmarkKey) else {
+            throw PlayError.message("Choose a Files folder first.")
+        }
+        let files: [(URL, String)] = songs.compactMap { song in
+            guard !song.isLocal, let file = song.localFile,
+                  let source = try? DownloadFile.url(filename: file, directory: downloadDirectory),
+                  FileManager.default.fileExists(atPath: source.path) else { return nil }
+            return (source, DownloadFolder.fileName(for: song, source: source))
+        }
+        if !files.isEmpty { try await DownloadFolder.copy(files, bookmark: bookmark) }
     }
 
     func importFiles(_ urls: [URL]) async {

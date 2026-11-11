@@ -124,6 +124,14 @@ struct SearchView: View {
     @State private var error: String?
     @State private var submitted = ""
     @State private var request: Task<Void, Never>?
+    @State private var publicPlaylist: PublicPlaylist?
+    @State private var imported = false
+    let initialQuery: String
+
+    init(initialQuery: String = "") {
+        self.initialQuery = initialQuery
+        _query = State(initialValue: initialQuery)
+    }
 
     var body: some View {
         List {
@@ -132,7 +140,7 @@ struct SearchView: View {
                     Image("PlayLogo").resizable().scaledToFit().frame(width: 54, height: 54)
                     VStack(alignment: .leading) {
                         Text("Your music, your way.").font(.headline)
-                        Text("Search for a song or artist to start listening.").font(.caption).foregroundColor(.secondary)
+                        Text("Search for music or paste a YouTube song or playlist link.").font(.caption).foregroundColor(.secondary)
                     }
                 }
             }
@@ -148,11 +156,21 @@ struct SearchView: View {
             if !submitted.isEmpty && results.isEmpty && !loading && error == nil {
                 Text("No songs found. Try another title or artist.").foregroundColor(.secondary)
             }
+            if let playlist = publicPlaylist {
+                Section(playlist.title) {
+                    Button(imported ? "Playlist added" : "Import playlist") {
+                        library.merge(playlist.songs)
+                        library.collections.importPlaylist(playlist)
+                        imported = true
+                    }.disabled(imported)
+                }
+            }
             ForEach(results) { song in SongRow(song: song, queue: results) }
         }
         .navigationTitle("Play")
         .searchable(text: $query, prompt: "Songs and artists")
         .onSubmit(of: .search) { search() }
+        .task { if !initialQuery.isEmpty && submitted.isEmpty { search() } }
         .onDisappear { request?.cancel(); loading = false }
     }
 
@@ -162,13 +180,27 @@ struct SearchView: View {
         request?.cancel()
         library.rememberSearch(text)
         submitted = text; error = nil; loading = true
+        publicPlaylist = nil; imported = false
         request = Task {
             do {
-                let songs = try await library.api.search(text)
-                guard !Task.isCancelled else { return }
-                results = songs
+                switch CatalogLink.parse(text) {
+                case .song(let id):
+                    let song = try await library.api.song(id: id)
+                    guard !Task.isCancelled else { return }
+                    results = [song]
+                case .playlist(let id):
+                    let playlist = try await library.api.playlist(id: id)
+                    guard !Task.isCancelled else { return }
+                    publicPlaylist = playlist
+                    results = playlist.songs
+                case nil:
+                    let songs = try await library.api.search(text)
+                    guard !Task.isCancelled else { return }
+                    results = songs
+                }
             } catch {
                 guard !Task.isCancelled else { return }
+                results = []
                 self.error = error.localizedDescription
             }
             loading = false
@@ -444,6 +476,10 @@ struct HapticsSettingsView: View {
 struct TogetherView: View {
     @EnvironmentObject private var together: TogetherSession
     @AppStorage("together.name") private var name = "Listener"
+    @AppStorage("together.port") private var port = ""
+    @AppStorage("together.approval") private var approval = false
+    @AppStorage("together.guestAdds") private var guestAdds = true
+    @AppStorage("together.guestControls") private var guestControls = false
     @State private var link = ""
     @State private var copied = false
     var body: some View {
@@ -457,7 +493,21 @@ struct TogetherView: View {
             }
             if !together.connected {
                 Section("Host a session") {
-                    Button("Start Music Together") { together.host(name: name) }
+                    TextField("Session port (automatic if blank)", text: $port).keyboardType(.numberPad)
+                    Toggle("Require host approval", isOn: $approval)
+                    Toggle("Guests can add songs", isOn: $guestAdds)
+                    Toggle("Guests can control playback", isOn: $guestControls)
+                    Button("Start Music Together") {
+                        let raw = port.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard raw.isEmpty || (UInt16(raw).map { $0 > 0 } == true) else {
+                            together.error = "Choose a port between 1 and 65535, or leave it blank."
+                            return
+                        }
+                        together.requireApproval = approval
+                        together.allowGuestAdds = guestAdds
+                        together.allowGuestControls = guestControls
+                        together.host(name: name, port: UInt16(raw) ?? 0)
+                    }
                 }
                 Section("Join a session") {
                     TextField("Paste invitation link", text: $link).textInputAutocapitalization(.never).disableAutocorrection(true)
@@ -471,11 +521,30 @@ struct TogetherView: View {
                             Text("Share this invitation privately. It grants access to your room.").font(.caption).foregroundColor(.secondary)
                         }
                         Toggle("Guests can control playback", isOn: $together.allowGuestControls)
+                        Toggle("Guests can add songs", isOn: $together.allowGuestAdds)
+                        Toggle("Require host approval", isOn: $together.requireApproval)
                     }
                 }
                 Section("Participants") {
                     ForEach(together.participants) { person in
-                        HStack { Text(person.name); Spacer(); if person.isHost { Text("Host").foregroundColor(.secondary) } }
+                        HStack {
+                            Text(person.name)
+                            Spacer()
+                            if person.isHost { Text("Host").foregroundColor(.secondary) }
+                            else if person.isPending { Text("Waiting").foregroundColor(.secondary) }
+                            if together.isHost && !person.isHost {
+                                Menu {
+                                    if person.isPending {
+                                        Button("Approve") { together.decide(person, approved: true) }
+                                        Button("Decline", role: .destructive) { together.decide(person, approved: false) }
+                                    } else {
+                                        Button("Remove", role: .destructive) { together.remove(person, ban: false) }
+                                        Button("Block for this session", role: .destructive) { together.remove(person, ban: true) }
+                                    }
+                                } label: { Image(systemName: "ellipsis.circle").frame(width: 44, height: 44) }
+                                    .accessibilityLabel("Manage \(person.name)")
+                            }
+                        }
                     }
                 }
                 Button("Leave session", role: .destructive) { together.leave(); copied = false }

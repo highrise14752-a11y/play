@@ -33,6 +33,8 @@ final class UserCollections: ObservableObject {
     private var pendingSeconds = 0.0
     private var lastPersisted = Date.distantPast
     private var currentEntry: String?
+    private var pendingEntry: ListeningEntry?
+    private var minimumListen = 0.0
     var historyPaused: Bool { UserDefaults.standard.bool(forKey: "privacy.pauseHistory") }
 
     init(directory: URL) {
@@ -51,6 +53,14 @@ final class UserCollections: ObservableObject {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return }
         state.playlists.append(LocalPlaylist(name: String(name.prefix(120))))
+        persist()
+    }
+    func importPlaylist(_ playlist: PublicPlaylist) {
+        let name = String(playlist.title.prefix(120))
+        var seen = Set<String>()
+        let ids = playlist.songs.map(\.id).filter { seen.insert($0).inserted }
+        guard !ids.isEmpty else { return }
+        state.playlists.append(LocalPlaylist(name: name, songIDs: ids))
         persist()
     }
     func renamePlaylist(_ id: String, name: String) {
@@ -74,17 +84,36 @@ final class UserCollections: ObservableObject {
     func started(_ song: Song) {
         flush()
         currentEntry = nil
+        pendingEntry = nil
         guard !historyPaused else { return }
         let entry = ListeningEntry(song: song)
+        let setting = UserDefaults.standard.object(forKey: "player.historyMinimum") as? Double ?? 30
+        minimumListen = min(120, max(0, setting.isFinite ? setting : 30))
+        if minimumListen > 0 { pendingEntry = entry }
+        else { record(entry) }
+    }
+    private func record(_ entry: ListeningEntry) {
         currentEntry = entry.id
         state.history.insert(entry, at: 0)
         if state.history.count > 5000 { state.history.removeLast(state.history.count - 5000) }
-        var total = state.totals[song.id] ?? ListeningTotal(song: song)
-        total.song = song; total.plays += 1; state.totals[song.id] = total
+        var total = state.totals[entry.song.id] ?? ListeningTotal(song: entry.song)
+        total.song = entry.song
+        total.plays += 1
+        total.seconds += entry.seconds
+        state.totals[entry.song.id] = total
         persist()
     }
     func listened(_ seconds: Double) {
-        guard !historyPaused, currentEntry != nil, seconds.isFinite, seconds > 0, seconds < 2 else { return }
+        guard !historyPaused, seconds.isFinite, seconds > 0, seconds < 2 else { return }
+        if var entry = pendingEntry {
+            entry.seconds += seconds
+            if entry.seconds >= minimumListen {
+                pendingEntry = nil
+                record(entry)
+            } else { pendingEntry = entry }
+            return
+        }
+        guard currentEntry != nil else { return }
         pendingSeconds += seconds
         if pendingSeconds >= 10 { flush(persistNow: Date().timeIntervalSince(lastPersisted) >= 30) }
     }
@@ -98,7 +127,7 @@ final class UserCollections: ObservableObject {
         if persistNow { persist() }
     }
     func clearHistory() {
-        currentEntry = nil; pendingSeconds = 0
+        currentEntry = nil; pendingEntry = nil; pendingSeconds = 0
         state.history = []; state.totals = [:]; persist()
     }
     func removeHistory(_ entry: ListeningEntry) { state.history.removeAll { $0.id == entry.id }; persist() }

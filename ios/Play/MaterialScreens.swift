@@ -52,6 +52,7 @@ struct RootView: View {
     @State private var tab = min(3, max(0, UserDefaults.standard.integer(forKey: "appearance.defaultTab")))
     @State private var showingPlayer = false
     @State private var searching = false
+    @State private var searchLink = ""
     @AppStorage("appearance.accent") private var accent = 0xFFB3BB
     @AppStorage("appearance.pureBlack") private var pureBlack = true
     @AppStorage("appearance.slimNav") private var slimNav = false
@@ -65,7 +66,7 @@ struct RootView: View {
                     if tab == 0 { Image("PlayLogo").resizable().scaledToFit().frame(width: 32, height: 32) }
                     Text(tab == 0 ? "Play" : labels[tab]).font(PlayTheme.font(28, weight: .bold)).accessibilityIdentifier("page.title")
                     Spacer()
-                    Button { searching = true } label: { Image(systemName: "magnifyingglass").font(.system(size: 23)).frame(width: 44, height: 44) }
+                    Button { searchLink = ""; searching = true } label: { Image(systemName: "magnifyingglass").font(.system(size: 23)).frame(width: 44, height: 44) }
                         .accessibilityLabel("Search")
                     NavigationLink { SettingsView().navigationBarHidden(false) } label: { Image(systemName: "gearshape").font(.system(size: 23)).frame(width: 44, height: 44) }
                         .accessibilityLabel("Settings").accessibilityIdentifier("open.settings")
@@ -102,12 +103,19 @@ struct RootView: View {
             }
         }.navigationViewStyle(.stack).tint(PlayTheme.color(accent))
         .sheet(isPresented: $showingPlayer) { NavigationView { PlayerView() }.navigationViewStyle(.stack) }
-        .sheet(isPresented: $searching) { NavigationView { SearchView() }.navigationViewStyle(.stack) }
+        .sheet(isPresented: $searching) { NavigationView { SearchView(initialQuery: searchLink).id(searchLink) }.navigationViewStyle(.stack) }
         .onChange(of: scenePhase) {
             haptics.setVisible($0 == .active)
             if $0 != .active { collections.flush(); library.player.persistQueue() }
         }
-        .onOpenURL { together.join(link: $0.absoluteString, name: UserDefaults.standard.string(forKey: "together.name") ?? "Listener") }
+        .onOpenURL { url in
+            if CatalogLink.parse(url.absoluteString) != nil {
+                searchLink = url.absoluteString
+                searching = true
+            } else {
+                together.join(link: url.absoluteString, name: UserDefaults.standard.string(forKey: "together.name") ?? "Listener")
+            }
+        }
         .alert("Play", isPresented: Binding(get: { library.error != nil || collections.error != nil }, set: { if !$0 { library.error = nil; collections.error = nil } })) {
             Button("OK") { library.error = nil; collections.error = nil }
         } message: { Text(library.error ?? collections.error ?? "") }

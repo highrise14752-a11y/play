@@ -73,10 +73,37 @@ actor LyricCatalog {
             struct Candidate: Decodable { let id: Int64; let accesskey: String }
             struct Matches: Decodable { let candidates: [Candidate] }
             struct Download: Decodable { let content: String? }
-            var query = ["ver": "1", "man": "yes", "client": "pc", "keyword": song.title + " - " + song.artist]
-            query["duration"] = seconds.map { String($0 * 1000) }
-            let matches: Matches = try await get("https://lyrics.kugou.com/search", query)
-            guard let match = matches.candidates.first else { return [] }
+            struct Songs: Decodable {
+                struct Results: Decodable {
+                    struct SongResult: Decodable { let hash: String; let duration: Int }
+                    let info: [SongResult]
+                }
+                let data: Results?
+            }
+            let keyword = song.title + " - " + song.artist
+            let endpoint = "https://lyrics.kugou.com/search"
+            let base = ["ver": "1", "man": "yes", "client": "pc"]
+            let tracks: Songs? = try? await get("https://mobileservice.kugou.com/api/v3/search/song", [
+                "version": "9108", "plat": "0", "pagesize": "5", "showtype": "0", "keyword": keyword
+            ])
+            try Task.checkCancellation()
+            var match: Candidate?
+            if let candidate = tracks?.data?.info.first(where: { track in
+                seconds.map { abs(Double(track.duration) - Double($0)) <= 5 } ?? true
+            }) {
+                var query = base
+                query["hash"] = candidate.hash
+                let matches: Matches? = try? await get(endpoint, query)
+                match = matches?.candidates.first
+            }
+            if match == nil {
+                var query = base
+                query["keyword"] = keyword
+                query["duration"] = seconds.map { String($0 * 1000) }
+                let matches: Matches = try await get(endpoint, query)
+                match = matches.candidates.first
+            }
+            guard let match = match else { return [] }
             let result: Download = try await get("https://lyrics.kugou.com/download", [
                 "ver": "1", "client": "pc", "fmt": "lrc", "charset": "utf8",
                 "id": String(match.id), "accesskey": match.accesskey

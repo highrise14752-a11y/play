@@ -96,6 +96,8 @@ final class TogetherSession: ObservableObject {
     @Published private(set) var invite: String?
     @Published private(set) var participants: [TogetherParticipant] = []
     @Published var allowGuestControls = false
+    @Published var allowGuestAdds = true
+    @Published var requireApproval = false
     @Published var error: String?
     private let player: PlaybackController
     private var listener: NWListener?
@@ -113,6 +115,8 @@ final class TogetherSession: ObservableObject {
     private var guestAddsAllowed = true
     private var roomSendsInFlight = Set<UUID>()
     private var lastResponse = 0.0
+    private var awaitingApproval = false
+    private var bannedClients = Set<String>()
 
     init(player: PlaybackController) {
         self.player = player
@@ -121,7 +125,7 @@ final class TogetherSession: ObservableObject {
         player.interceptEnqueue = { [weak self] song, next in self?.requestSong(song, next: next) ?? false }
     }
 
-    func host(name: String, addressOverride: String? = nil) {
+    func host(name: String, addressOverride: String? = nil, port: UInt16 = 0) {
         leave()
         guard player.current?.isLocal != true else { error = "Choose an online song before hosting. Local files are not transferred."; return }
         guard let address = addressOverride ?? Self.wifiAddress() else { error = "Connect to Wi-Fi before hosting a session."; return }
@@ -130,14 +134,14 @@ final class TogetherSession: ObservableObject {
         participantID = UUID().uuidString
         participants = [TogetherParticipant(id: participantID, name: displayName, isHost: true)]
         do {
-            let listener = try NWListener(using: Self.parameters(), on: .any)
+            let listener = try NWListener(using: Self.parameters(), on: NWEndpoint.Port(rawValue: port) ?? .any)
             self.listener = listener
             listener.stateUpdateHandler = { [weak self, weak listener] state in
                 Task { @MainActor in
-                    guard let self = self else { return }
+                    guard let self = self, let listener = listener, self.listener === listener else { return }
                     switch state {
                     case .ready:
-                        guard let port = listener?.port?.rawValue else { return }
+                        guard let port = listener.port?.rawValue else { return }
                         self.invite = TogetherInvite(host: address, port: port, sessionID: self.sessionID, key: self.key).link
                         self.connected = true; self.player.sharedSessionActive = true; self.status = "Hosting on Wi-Fi"
                         self.startTimer()
@@ -192,10 +196,45 @@ final class TogetherSession: ObservableObject {
         let wasGuest = connected && !isHost
         connected = false; isHost = false; invite = nil; participants = []; clockOffset = nil
         roomSendsInFlight = []
+        bannedClients = []; awaitingApproval = false
         guestControlsAllowed = false; guestAddsAllowed = true
         player.sharedSessionActive = false
         if wasGuest { applying = true; player.pause(); applying = false }
         status = "Not connected"
+    }
+
+    func decide(_ person: TogetherParticipant, approved: Bool) {
+        guard isHost, let id = identities.first(where: { $0.value.id == person.id && $0.value.isPending })?.key,
+              let connection = peers[id] else { return }
+        let decision: [String: Any] = ["type": "join_decision", "sessionId": sessionID, "participantId": person.id, "approved": approved]
+        if approved {
+            identities[id]?.isPending = false
+            send(decision, to: connection)
+        } else {
+            identities[id] = nil
+            close(connection, after: decision)
+        }
+        rebuildParticipants()
+        broadcast()
+    }
+
+    func remove(_ person: TogetherParticipant, ban: Bool) {
+        guard isHost, let id = identities.first(where: { $0.value.id == person.id })?.key,
+              let connection = peers[id] else { return }
+        if ban { bannedClients.insert(person.id) }
+        identities[id] = nil
+        close(connection, after: [
+            "type": ban ? "ban" : "kick", "sessionId": sessionID, "participantId": person.id,
+            "reason": ban ? "The host blocked you from this session." : "The host removed you from this session."
+        ])
+        rebuildParticipants()
+        broadcast()
+    }
+
+    private func close(_ connection: NWConnection, after object: [String: Any]) {
+        guard let data = try? JSONSerialization.data(withJSONObject: object) else { connection.cancel(); return }
+        let context = NWConnection.ContentContext(identifier: "Play.Close", metadata: [NWProtocolWebSocket.Metadata(opcode: .text)])
+        connection.send(content: data, contentContext: context, isComplete: true, completion: .contentProcessed { _ in connection.cancel() })
     }
 
     private static func parameters() -> NWParameters {
@@ -252,17 +291,22 @@ final class TogetherSession: ObservableObject {
             guard message["sessionId"] as? String == sessionID, message["sessionKey"] as? String == key,
                   message["protocolVersion"] as? Int == 1, let client = message["clientId"] as? String, !client.isEmpty,
                   client.utf8.count <= 128, client != participantID else { connection.cancel(); return }
-            for (oldID, identity) in identities where identity.id == client && oldID != id {
+            if bannedClients.contains(client) {
+                close(connection, after: ["type": "ban", "sessionId": sessionID, "participantId": client, "reason": "The host blocked you from this session."])
+                return
+            }
+            let previous = identities.first(where: { $0.value.id == client })?.value
+            for (oldID, identity) in Array(identities) where identity.id == client && oldID != id {
                 peers[oldID]?.cancel(); peers[oldID] = nil; identities[oldID] = nil
             }
-            let guest = TogetherParticipant(id: client, name: String((message["displayName"] as? String ?? "Listener").prefix(64)))
+            let guest = TogetherParticipant(id: client, name: String((message["displayName"] as? String ?? "Listener").prefix(64)), isPending: previous?.isPending ?? requireApproval)
             identities[id] = guest
-            send(["type": "server_welcome", "protocolVersion": 1, "sessionId": sessionID, "participantId": client, "role": "GUEST", "isPending": false,
-                  "settings": ["allowGuestsToAddTracks": true, "allowGuestsToControlPlayback": allowGuestControls, "requireHostApprovalToJoin": false]], to: connection)
+            send(["type": "server_welcome", "protocolVersion": 1, "sessionId": sessionID, "participantId": client, "role": "GUEST", "isPending": guest.isPending,
+                  "settings": ["allowGuestsToAddTracks": allowGuestAdds, "allowGuestsToControlPlayback": allowGuestControls, "requireHostApprovalToJoin": requireApproval]], to: connection)
             rebuildParticipants(); broadcast(); return
         }
         if isHost && identities[id] == nil { connection.cancel(); return }
-        if type == "room_state", !isHost {
+        if type == "room_state", !isHost, !awaitingApproval {
             guard let state = message["state"], let bytes = try? JSONSerialization.data(withJSONObject: state),
                   let room = try? JSONDecoder().decode(TogetherRoom.self, from: bytes), room.sessionId == sessionID else { return }
             participants = room.participants
@@ -276,8 +320,18 @@ final class TogetherSession: ObservableObject {
             participantID = message["participantId"] as? String ?? participantID
             connected = true; player.sharedSessionActive = true
             lastResponse = ProcessInfo.processInfo.systemUptime
-            status = (message["isPending"] as? Bool == true) ? "Waiting for host approval" : "Listening together"
+            awaitingApproval = message["isPending"] as? Bool == true
+            if awaitingApproval { applying = true; player.pause(); applying = false }
+            status = awaitingApproval ? "Waiting for host approval" : "Listening together"
             startTimer()
+        } else if type == "join_decision", !isHost, message["participantId"] as? String == participantID {
+            if message["approved"] as? Bool == true {
+                awaitingApproval = false
+                status = "Listening together"
+            } else {
+                error = "The host declined your request to join."
+                leave()
+            }
         } else if type == "heartbeat_ping" && isHost {
             send(["type": "heartbeat_pong", "sessionId": sessionID, "pingId": message["pingId"] ?? 0,
                   "clientElapsedRealtimeMs": message["clientElapsedRealtimeMs"] ?? 0, "serverElapsedRealtimeMs": Self.now()], to: connection)
@@ -286,10 +340,10 @@ final class TogetherSession: ObservableObject {
                   let server = message["serverElapsedRealtimeMs"] as? Int {
             clockOffset = Double(server) - Double(ping + Self.now()) / 2
             lastResponse = ProcessInfo.processInfo.systemUptime
-        } else if type == "control_request" && isHost && allowGuestControls,
+        } else if type == "control_request" && isHost && allowGuestControls && identities[id]?.isPending == false,
                   let action = message["action"] as? [String: Any] {
             control(action); broadcast()
-        } else if type == "add_track_request" && isHost,
+        } else if type == "add_track_request" && isHost && allowGuestAdds && identities[id]?.isPending == false,
                   let track = message["track"], let bytes = try? JSONSerialization.data(withJSONObject: track),
                   let track = try? JSONDecoder().decode(TogetherTrack.self, from: bytes), let song = track.validatedSong {
             guard player.queue.count < 500 else {
@@ -326,14 +380,14 @@ final class TogetherSession: ObservableObject {
         let songs = TogetherQueue.window(player.queue, currentID: player.current?.id)
         let hash = SHA256.hash(data: Data(songs.map(\.id).joined(separator: "|").utf8)).map { String(format: "%02x", $0) }.joined()
         let room = TogetherRoom(sessionId: sessionID, hostId: participantID, participants: participants,
-                                settings: TogetherSettings(allowGuestsToControlPlayback: allowGuestControls), queue: songs.map(TogetherTrack.init), queueHash: hash,
+                                settings: TogetherSettings(allowGuestsToAddTracks: allowGuestAdds, allowGuestsToControlPlayback: allowGuestControls, requireHostApprovalToJoin: requireApproval), queue: songs.map(TogetherTrack.init), queueHash: hash,
                                 currentIndex: songs.firstIndex { $0.id == player.current?.id } ?? 0,
                                 isPlaying: player.isPlaying, positionMs: Int(player.position * 1000), repeatMode: player.repeatMode.rawValue,
                                 shuffleEnabled: player.shuffleEnabled, sentAtElapsedRealtimeMs: Self.now())
         struct Envelope: Encodable { let type = "room_state"; let state: TogetherRoom }
         guard let data = try? JSONEncoder().encode(Envelope(state: room)) else { return }
         guard data.count <= 262144 else { error = "The shared queue contains too much metadata."; return }
-        for (id, connection) in peers where identities[id] != nil && !roomSendsInFlight.contains(id) {
+        for (id, connection) in peers where identities[id]?.isPending == false && !roomSendsInFlight.contains(id) {
             roomSendsInFlight.insert(id)
             let context = NWConnection.ContentContext(identifier: "Play.Room", metadata: [NWProtocolWebSocket.Metadata(opcode: .text)])
             connection.send(content: data, contentContext: context, isComplete: true, completion: .contentProcessed { [weak self] _ in
@@ -362,6 +416,7 @@ final class TogetherSession: ObservableObject {
     private func requestControl(_ action: String, value: Double?) -> Bool {
         guard connected && !isHost && !applying else { return false }
         if action == "ended" { return true }
+        if awaitingApproval { player.error = "Waiting for host approval."; return true }
         if action == "edit_queue" { player.error = "Only the host can reorder or remove queued songs."; return true }
         guard guestControlsAllowed else { player.error = "The host controls playback in this session."; return true }
         guard let connection = peers.values.first else { return true }
@@ -378,6 +433,7 @@ final class TogetherSession: ObservableObject {
     }
     private func requestSong(_ song: Song, next: Bool = false) -> Bool {
         guard connected && !applying else { return false }
+        if awaitingApproval { player.error = "Waiting for host approval."; return true }
         if song.isLocal { player.error = "Local files cannot be shared in Music Together."; return true }
         guard !isHost, let connection = peers.values.first else { return false }
         if player.queue.contains(where: { $0.id == song.id }) {

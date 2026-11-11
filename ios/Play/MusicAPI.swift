@@ -38,6 +38,50 @@ actor MusicAPI {
         return try await search(song.artist).filter { $0.id != song.id }
     }
 
+    func song(id: String) async throws -> Song {
+        let response = try await musicRequest("next", parameters: ["videoId": id, "isAudioOnly": true])
+        guard let song = filtered(Self.parseSearch(response)).first(where: { $0.id == id }) else {
+            throw PlayError.message("This song is unavailable or hidden by your content settings.")
+        }
+        return song
+    }
+
+    func playlist(id: String) async throws -> PublicPlaylist {
+        var response = try await musicRequest("browse", parameters: ["browseId": "VL" + id])
+        let renderer = Self.firstRenderer("musicResponsiveHeaderRenderer", in: response)
+            ?? Self.firstRenderer("musicDetailHeaderRenderer", in: response)
+        let titleField = renderer?["title"] as? [String: Any]
+        let runs = titleField?["runs"] as? [[String: Any]] ?? []
+        let title = runs.compactMap { $0["text"] as? String }.joined()
+        var visited = Set<String>()
+        var seen = Set<String>()
+        var songs: [Song] = []
+        for page in 0..<12 {
+            songs.append(contentsOf: filtered(Self.parseSearch(response)).filter { seen.insert($0.id).inserted })
+            let continuation = Self.firstRenderer("continuationItemRenderer", in: response)
+            let endpoint = continuation?["continuationEndpoint"] as? [String: Any]
+            let command = endpoint?["continuationCommand"] as? [String: Any]
+            guard page < 11, let token = command?["token"] as? String, visited.insert(token).inserted else { break }
+            response = try await musicRequest("browse", parameters: ["continuation": token])
+        }
+        guard !songs.isEmpty else { throw PlayError.message("This playlist has no public songs available to import.") }
+        return PublicPlaylist(title: title.isEmpty ? "YouTube playlist" : title, songs: songs)
+    }
+
+    private static func firstRenderer(_ name: String, in value: Any) -> [String: Any]? {
+        if let dictionary = value as? [String: Any] {
+            if let match = dictionary[name] as? [String: Any] { return match }
+            for child in dictionary.values {
+                if let match = firstRenderer(name, in: child) { return match }
+            }
+        } else if let array = value as? [Any] {
+            for child in array {
+                if let match = firstRenderer(name, in: child) { return match }
+            }
+        }
+        return nil
+    }
+
     private func filtered(_ songs: [Song]) -> [Song] {
         let defaults = UserDefaults.standard
         let hideExplicit = defaults.bool(forKey: "content.hideExplicit")
@@ -46,7 +90,13 @@ actor MusicAPI {
     }
 
     private func musicRequest(_ endpoint: String, parameters: [String: Any]) async throws -> Any {
-        var request = URLRequest(url: URL(string: "https://music.youtube.com/youtubei/v1/\(endpoint)?prettyPrint=false")!)
+        var url = URLComponents(string: "https://music.youtube.com/youtubei/v1/\(endpoint)")!
+        var query = [URLQueryItem(name: "prettyPrint", value: "false")]
+        if let continuation = parameters["continuation"] as? String {
+            query.append(URLQueryItem(name: "continuation", value: continuation))
+        }
+        url.queryItems = query
+        var request = URLRequest(url: url.url!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("https://music.youtube.com", forHTTPHeaderField: "Origin")

@@ -260,6 +260,7 @@ struct PlayerSettingsView: View {
     @AppStorage("player.pauseAtZero") private var pauseAtZero = false
     @AppStorage("player.bluetoothStart") private var bluetoothStart = false
     @AppStorage("player.progressiveSeek") private var progressiveSeek = false
+    @AppStorage("player.historyMinimum") private var historyMinimum = 30.0
     var body: some View {
         Form {
             Section("Music haptics") {
@@ -278,6 +279,10 @@ struct PlayerSettingsView: View {
                 Toggle("Pause at zero device volume", isOn: $pauseAtZero)
                 Toggle("Resume on Bluetooth connect", isOn: $bluetoothStart)
                 Toggle("Progressive skip intervals", isOn: $progressiveSeek)
+                VStack(alignment: .leading) {
+                    Text("Minimum listening time for history: \(Int(historyMinimum)) sec")
+                    Slider(value: $historyMinimum, in: 0...120, step: 5)
+                }
             }
             Section("Queue") {
                 Toggle("Restore queue and position", isOn: $persistentQueue)
@@ -401,6 +406,10 @@ struct StorageSettingsView: View {
     @EnvironmentObject private var library: LibraryStore
     @State private var cacheCleared = false
     @State private var clearingDownloads = false
+    @State private var pickingFolder = false
+    @State private var copying = false
+    @State private var folderStatus: String?
+    @AppStorage(DownloadFolder.nameKey) private var folder = ""
     var body: some View {
         Form {
             Section("Downloaded songs") {
@@ -411,10 +420,40 @@ struct StorageSettingsView: View {
                 Text("Use a song’s menu to remove it and its saved audio.").font(.caption).foregroundColor(.secondary)
                 Button("Clear all downloads", role: .destructive) { clearingDownloads = true }
             }
+            Section("Download location") {
+                Button(folder.isEmpty ? "Choose a Files folder" : "Change folder: \(folder)") { pickingFolder = true }
+                if !folder.isEmpty {
+                    Button(copying ? "Copying…" : "Copy existing downloads to folder") {
+                        copying = true
+                        Task {
+                            defer { copying = false }
+                            do { try await library.copyDownloadsToFiles(); folderStatus = "Downloads copied." }
+                            catch { folderStatus = error.localizedDescription }
+                        }
+                    }.disabled(copying)
+                    Button("Save in Play only") {
+                        UserDefaults.standard.removeObject(forKey: DownloadFolder.bookmarkKey)
+                        folder = ""
+                        folderStatus = nil
+                    }.disabled(copying)
+                    Text("New downloads are also copied to this folder. Play keeps an offline copy on this device.")
+                        .font(.caption).foregroundColor(.secondary)
+                }
+                if let status = folderStatus { Text(status).font(.caption).foregroundColor(.secondary) }
+            }
             Section("Cache") {
                 Button(cacheCleared ? "Artwork cache cleared" : "Clear artwork cache") { URLCache.shared.removeAllCachedResponses(); cacheCleared = true }
             }
         }.navigationTitle("Storage").navigationBarTitleDisplayMode(.inline)
+            .fileImporter(isPresented: $pickingFolder, allowedContentTypes: [.folder]) { result in
+                do {
+                    let url = try result.get()
+                    let bookmark = try DownloadFolder.bookmark(for: url)
+                    UserDefaults.standard.set(bookmark, forKey: DownloadFolder.bookmarkKey)
+                    folder = url.lastPathComponent
+                    folderStatus = nil
+                } catch { folderStatus = error.localizedDescription }
+            }
             .alert("Clear all downloads?", isPresented: $clearingDownloads) {
                 Button("Cancel", role: .cancel) { }
                 Button("Clear", role: .destructive) { library.clearDownloads() }
