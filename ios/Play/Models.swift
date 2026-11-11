@@ -10,15 +10,23 @@ struct Song: Identifiable, Codable, Equatable {
     var album: String?
     var albumID: String?
     var artistID: String?
+    var explicit: Bool?
+    var musicVideo: Bool?
     // A relative filename, never an expiring stream URL or absolute sandbox path.
     var localFile: String?
     var isLocal: Bool { id.hasPrefix("local:") }
+}
+
+struct LyricWord: Hashable {
+    let time: Double?
+    let text: String
 }
 
 struct LyricLine: Identifiable, Hashable {
     let id: Int
     let time: Double?
     let text: String
+    var words: [LyricWord] = []
 }
 
 enum LyricsParser {

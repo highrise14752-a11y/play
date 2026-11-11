@@ -5,6 +5,43 @@ import UIKit
 @testable import Play
 
 final class PlayTests: XCTestCase {
+    func testTTMLKeepsWordTimesAndSkipsAlternativeText() {
+        let text = #"<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata"><body><div><p begin="00:02.500"><span begin="2.5s">First</span> <span begin="3200ms">line</span><span ttm:role="x-translation">ignore</span></p><p begin="00:04.000">Next line</p></div></body></tt>"#
+        let lines = TTMLLyrics.parse(text)
+        XCTAssertEqual(lines.map(\.time), [2.5, 4])
+        XCTAssertEqual(lines.map(\.text), ["First line", "Next line"])
+        XCTAssertEqual(lines.first?.words.compactMap(\.time), [2.5, 3.2])
+        XCTAssertEqual(LyricsParser.activeIndex(in: lines, at: 4), 1)
+    }
+
+    func testDisabledLyricsProviderCannotBecomeFirst() {
+        XCTAssertEqual(LyricSource.ordered(enabled: [.lrcLib, .kuGou], preferred: .better), [.lrcLib, .kuGou])
+        XCTAssertEqual(LyricSource.ordered(enabled: [.lrcLib, .better, .kuGou], preferred: .better), [.better, .lrcLib, .kuGou])
+    }
+
+    @MainActor func testRestoredQueueStaysPausedAndKeepsPosition() throws {
+        let defaults = UserDefaults.standard
+        let old = defaults.object(forKey: "player.persistentQueue")
+        defaults.set(true, forKey: "player.persistentQueue")
+        defer { defaults.set(old, forKey: "player.persistentQueue") }
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let first = Song(id: "first", title: "First", artist: "Artist")
+        let second = Song(id: "second", title: "Second", artist: "Artist", duration: 180)
+        let snapshot = SavedQueue(current: second, songs: [first, second], position: 42, shuffle: true, repeatMode: 2)
+        try JSONEncoder().encode(snapshot).write(to: file)
+        let player = PlaybackController(api: MusicAPI(), queueFile: file)
+        XCTAssertEqual(player.current?.id, second.id)
+        XCTAssertEqual(player.queue, [first, second])
+        XCTAssertEqual(player.position, 42)
+        XCTAssertFalse(player.isPlaying)
+        XCTAssertTrue(player.shuffleEnabled)
+        XCTAssertEqual(player.repeatMode, .all)
+        defaults.set(false, forKey: "player.persistentQueue")
+        player.persistQueue()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+    }
+
     func testTrackTimeFormatsMeasuredAudioAndLongSongs() {
         XCTAssertEqual(TrackTime.text(nil), "—")
         XCTAssertEqual(TrackTime.text(.nan), "—")

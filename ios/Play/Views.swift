@@ -9,12 +9,16 @@ struct MiniPlayerView: View {
     @Binding var showingPlayer: Bool
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var collections: UserCollections
+    @AppStorage("appearance.compactMini") private var compact = false
+    @AppStorage("appearance.artworkSwipe") private var swipe = false
+    @AppStorage("appearance.swipeDistance") private var swipeDistance = 52.0
     var body: some View {
         if let song = player.current {
             HStack {
                 Button { showingPlayer = true } label: {
                     HStack {
-                        Artwork(url: song.artwork).frame(width: 43, height: 43).clipShape(Circle())
+                        Artwork(url: song.artwork).frame(width: compact ? 36 : 43, height: compact ? 36 : 43)
+                            .clipShape(RoundedRectangle(cornerRadius: compact ? 6 : 24))
                         VStack(alignment: .leading) {
                             Text(song.title).font(PlayTheme.font(13, weight: .medium)).lineLimit(1)
                             Text(song.artist).font(PlayTheme.font(10)).foregroundColor(.secondary).lineLimit(1)
@@ -26,19 +30,26 @@ struct MiniPlayerView: View {
                 Button(action: player.toggle) {
                     Image(systemName: player.isPlaying ? "pause.fill" : "play.fill").frame(width: 44, height: 44)
                 }.accessibilityLabel(player.isPlaying ? "Pause" : "Play")
-                Button { library.save(song); collections.toggleLike(song) } label: {
+                Button { library.toggleLike(song) } label: {
                     Image(systemName: collections.liked(song) ? "heart.fill" : "heart").frame(width: 38, height: 44)
                 }.accessibilityLabel("Like song")
             }
-            .padding(.horizontal, 12).padding(.vertical, 7).background(Capsule().fill(PlayTheme.surface))
+            .padding(.horizontal, 12).padding(.vertical, compact ? 2 : 7)
+            .background(RoundedRectangle(cornerRadius: compact ? 10 : 40).fill(PlayTheme.surface))
+            .simultaneousGesture(DragGesture(minimumDistance: 20).onEnded {
+                guard swipe, abs($0.translation.width) > swipeDistance,
+                      abs($0.translation.width) > abs($0.translation.height) * 2 else { return }
+                if $0.translation.width < 0 { player.next() } else { player.previous() }
+            }, including: swipe ? .all : .none)
         }
     }
 }
 
 struct Artwork: View {
     let url: URL?
+    var fit = false
     var body: some View {
-        AsyncImage(url: url) { image in image.resizable().scaledToFill() } placeholder: {
+        AsyncImage(url: url) { image in image.resizable().aspectRatio(contentMode: fit ? .fit : .fill) } placeholder: {
             ZStack { Color.white.opacity(0.07); Image("PlayLogo").resizable().scaledToFit() }
         }.clipped().accessibilityHidden(true)
     }
@@ -49,6 +60,7 @@ struct SongRow: View {
     let queue: [Song]
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var collections: UserCollections
+    @AppStorage("appearance.swipeQueue") private var swipeQueue = false
     var body: some View {
         HStack(spacing: 12) {
             Button { library.play(song, in: queue) } label: {
@@ -68,7 +80,7 @@ struct SongRow: View {
                 Button { library.play(song, in: queue) } label: { Label("Play now", systemImage: "play") }
                 Button { library.player.enqueue(library.saved(song), next: true) } label: { Label("Play next", systemImage: "text.insert") }
                 Button { library.player.enqueue(library.saved(song), next: false) } label: { Label("Add to queue", systemImage: "text.append") }
-                Button { library.save(song); collections.toggleLike(song) } label: { Label(collections.liked(song) ? "Unlike" : "Like", systemImage: "heart") }
+                Button { library.toggleLike(song) } label: { Label(collections.liked(song) ? "Unlike" : "Like", systemImage: "heart") }
                 Button { library.save(song) } label: { Label("Save to library", systemImage: "plus") }
                 if !collections.state.playlists.isEmpty {
                     Menu("Add to playlist") {
@@ -96,6 +108,11 @@ struct SongRow: View {
             } label: { Image(systemName: "ellipsis").rotationEffect(.degrees(90)).frame(width: 25, height: 44) }
             .accessibilityLabel("Song options")
         }.padding(.vertical, 4)
+            .simultaneousGesture(DragGesture(minimumDistance: 28).onEnded { drag in
+                let x = drag.translation.width
+                guard swipeQueue, abs(x) > 65, abs(x) > abs(drag.translation.height) * 2 else { return }
+                library.player.enqueue(library.saved(song), next: x > 0)
+            }, including: swipeQueue ? .all : .none)
     }
 }
 
@@ -119,6 +136,13 @@ struct SearchView: View {
                     }
                 }
             }
+            if submitted.isEmpty && !library.searchHistory.isEmpty {
+                Section("Recent searches") {
+                    ForEach(library.searchHistory, id: \.self) { term in
+                        Button { query = term; search() } label: { Label(term, systemImage: "clock") }
+                    }
+                }
+            }
             if loading { HStack { Spacer(); ProgressView("Searching…"); Spacer() } }
             if let error = error { Text(error).foregroundColor(.orange) }
             if !submitted.isEmpty && results.isEmpty && !loading && error == nil {
@@ -136,6 +160,7 @@ struct SearchView: View {
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         request?.cancel()
+        library.rememberSearch(text)
         submitted = text; error = nil; loading = true
         request = Task {
             do {
@@ -155,7 +180,11 @@ struct LibraryView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var collections: UserCollections
     @State private var importing = false
-    @State private var section = "Playlists"
+    @State private var section = UserDefaults.standard.string(forKey: "appearance.defaultLibrary") ?? "Playlists"
+    @AppStorage("appearance.showLiked") private var showLiked = true
+    @AppStorage("appearance.showDownloaded") private var showDownloaded = true
+    @AppStorage("appearance.showTop") private var showTop = true
+    @AppStorage("content.topCount") private var topCount = 50
     @State private var query = ""
     @State private var sort = "Date added"
     @State private var descending = false
@@ -192,9 +221,9 @@ struct LibraryView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     if section == "Playlists" {
-                        NavigationLink { AutoCollectionView(kind: "Liked") } label: { collectionRow("Liked", icon: "heart") }
-                        NavigationLink { AutoCollectionView(kind: "Downloaded") } label: { collectionRow("Downloaded", icon: "arrow.down.circle") }
-                        NavigationLink { AutoCollectionView(kind: "My top 50") } label: { collectionRow("My top 50", icon: "chart.line.uptrend.xyaxis") }
+                        if showLiked { NavigationLink { AutoCollectionView(kind: "Liked") } label: { collectionRow("Liked", icon: "heart") } }
+                        if showDownloaded { NavigationLink { AutoCollectionView(kind: "Downloaded") } label: { collectionRow("Downloaded", icon: "arrow.down.circle") } }
+                        if showTop { NavigationLink { AutoCollectionView(kind: "Top") } label: { collectionRow("My top \(topCount)", icon: "chart.line.uptrend.xyaxis") } }
                         ForEach(collections.state.playlists) { playlist in
                             NavigationLink { PlaylistDetailView(id: playlist.id) } label: { collectionRow(playlist.name, icon: "music.note.list", subtitle: "\(playlist.songIDs.count) songs") }
                                 .contextMenu {
@@ -232,7 +261,7 @@ struct LibraryView: View {
         HStack(spacing: 13) {
             Image(systemName: icon).font(.system(size: 23)).foregroundColor(PlayTheme.accent).frame(width: 48, height: 48).background(RoundedRectangle(cornerRadius: 7).fill(PlayTheme.surface))
             VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(PlayTheme.font(14, weight: .medium)).foregroundColor(.white)
+                Text(title).font(PlayTheme.font(14, weight: .medium)).foregroundColor(.primary)
                 if let subtitle = subtitle { Text(subtitle).font(PlayTheme.font(11)).foregroundColor(.secondary) }
             }
             Spacer()
@@ -261,15 +290,29 @@ struct PlayerView: View {
     @State private var queueVisible = false
     @State private var timerVisible = false
     @State private var shareVisible = false
+    @AppStorage("appearance.playerBackground") private var backgroundStyle = "Gradient"
+    @AppStorage("appearance.hideArtwork") private var hideArtwork = false
+    @AppStorage("appearance.cropArtwork") private var cropArtwork = true
+    @AppStorage("appearance.artworkSwipe") private var swipeArtwork = false
+    @AppStorage("appearance.swipeDistance") private var swipeDistance = 52.0
+    @AppStorage("appearance.accentButtons") private var accentButtons = false
+    @AppStorage("appearance.playerCompact") private var compactControls = false
 
     var body: some View {
         VStack(spacing: 16) {
             if let song = player.current {
                 if showLyrics {
                     LyricsView().id(song.id).frame(maxHeight: .infinity)
+                } else if hideArtwork {
+                    Spacer()
                 } else {
-                    Artwork(url: song.artwork).aspectRatio(1, contentMode: .fit).cornerRadius(20)
+                    Artwork(url: song.artwork, fit: !cropArtwork).aspectRatio(1, contentMode: .fit).cornerRadius(20)
                         .padding(.horizontal, 20).frame(maxHeight: .infinity)
+                        .simultaneousGesture(DragGesture(minimumDistance: 20).onEnded {
+                            guard abs($0.translation.width) > swipeDistance,
+                                  abs($0.translation.width) > abs($0.translation.height) * 2 else { return }
+                            if $0.translation.width < 0 { player.next() } else { player.previous() }
+                        }, including: swipeArtwork ? .all : .none)
                 }
                 VStack(alignment: .leading, spacing: 6) {
                     Text(song.title).font(PlayTheme.font(24, weight: .bold)).lineLimit(2)
@@ -277,7 +320,7 @@ struct PlayerView: View {
                         Text(song.artist).font(PlayTheme.font(13)).foregroundColor(.secondary).lineLimit(1)
                         Spacer()
                         Button { shareVisible = true } label: { Image(systemName: "square.and.arrow.up") }.accessibilityLabel("Share song")
-                        Button { library.save(song); collections.toggleLike(song) } label: {
+                        Button { library.toggleLike(song) } label: {
                             Image(systemName: collections.liked(song) ? "heart.fill" : "heart")
                         }.accessibilityLabel("Like song")
                     }
@@ -286,15 +329,27 @@ struct PlayerView: View {
                         if !editing, let value = scrub { player.seek(value); scrub = nil }
                     }
                     .disabled(player.duration <= 0)
-                    HStack { Text(TrackTime.text(scrub ?? player.position, elapsed: true)); Spacer(); Text(TrackTime.text(player.duration > 0 ? player.duration : nil)) }
+                    HStack {
+                        Text(TrackTime.text(scrub ?? player.position, elapsed: true))
+                        Spacer()
+                        Button { player.skipTime(-1) } label: { Image(systemName: "gobackward.10") }.accessibilityLabel("Skip back 10 seconds")
+                        Button { player.skipTime(1) } label: { Image(systemName: "goforward.10") }.accessibilityLabel("Skip forward 10 seconds")
+                        Spacer()
+                        Text(TrackTime.text(player.duration > 0 ? player.duration : nil))
+                    }
                         .font(.caption.monospacedDigit()).foregroundColor(.secondary)
                 }.padding(.horizontal, 24)
-                HStack(spacing: 22) {
+                HStack(spacing: compactControls ? 14 : 22) {
                     Button { player.setShuffle(!player.shuffleEnabled) } label: { Image(systemName: "shuffle").foregroundColor(player.shuffleEnabled ? PlayTheme.accent : .gray) }.accessibilityLabel("Shuffle")
                     Button(action: player.previous) { Image(systemName: "backward.end.fill").font(.title2).frame(width: 46, height: 46).background(RoundedRectangle(cornerRadius: 14).fill(.white.opacity(0.08))) }.accessibilityLabel("Previous song")
                     Button(action: player.toggle) {
                         if player.loading { ProgressView().frame(width: 50, height: 50) }
-                        else { Image(systemName: player.isPlaying ? "pause.fill" : "play.fill").font(.system(size: 27)).foregroundColor(.black).frame(width: 67, height: 67).background(Circle().fill(.white)) }
+                        else {
+                            Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                                .font(.system(size: compactControls ? 21 : 27)).foregroundColor(Color(uiColor: .systemBackground))
+                                .frame(width: compactControls ? 52 : 67, height: compactControls ? 52 : 67)
+                                .background(Circle().fill(accentButtons ? PlayTheme.accent : Color.primary))
+                        }
                     }.accessibilityLabel(player.isPlaying ? "Pause" : "Play")
                     Button(action: player.next) { Image(systemName: "forward.end.fill").font(.title2).frame(width: 46, height: 46).background(RoundedRectangle(cornerRadius: 14).fill(.white.opacity(0.08))) }.accessibilityLabel("Next song")
                     Button { player.setRepeat(PlayRepeatMode(rawValue: (player.repeatMode.rawValue + 1) % 3) ?? .off) } label: {
@@ -312,13 +367,30 @@ struct PlayerView: View {
                 }.font(PlayTheme.font(11)).padding(.bottom, 16)
             }
         }
-        .background(LinearGradient(colors: [PlayTheme.accent.opacity(0.17), .black], startPoint: .top, endPoint: .bottom).ignoresSafeArea())
+        .background { playerBackground.ignoresSafeArea() }
         .navigationTitle("Now Playing").navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .navigationBarLeading) { Button { dismiss() } label: { Image(systemName: "chevron.down") }.accessibilityLabel("Close player") } }
         .sheet(isPresented: $queueVisible) { NavigationView { QueueView().toolbar { ToolbarItem(placement: .navigationBarLeading) { Button("Done") { queueVisible = false } } } }.navigationViewStyle(.stack) }
         .sheet(isPresented: $timerVisible) { NavigationView { SleepTimerView().toolbar { ToolbarItem(placement: .navigationBarLeading) { Button("Done") { timerVisible = false } } } }.navigationViewStyle(.stack) }
         .sheet(isPresented: $shareVisible) { ShareView(items: shareItems) }
         .onChange(of: player.current?.id) { _ in scrub = nil }
+    }
+
+    @ViewBuilder private var playerBackground: some View {
+        switch backgroundStyle {
+        case "Solid": PlayTheme.background
+        case "Blurred artwork":
+            ZStack {
+                PlayTheme.background
+                GeometryReader { size in
+                    Artwork(url: player.current?.artwork).frame(width: size.size.width, height: size.size.height)
+                        .blur(radius: 28).opacity(0.26)
+                }
+            }.clipped()
+        default:
+            LinearGradient(colors: [PlayTheme.accent.opacity(0.17), PlayTheme.background], startPoint: .top, endPoint: .bottom)
+                .background(PlayTheme.background)
+        }
     }
 
     private var shareItems: [Any] {
@@ -360,6 +432,7 @@ struct HapticsSettingsView: View {
                     ForEach(HapticMode.allCases, id: \.rawValue) { Text($0.rawValue).tag($0.rawValue) }
                 }
                 Slider(value: $haptics.intensity, in: 0...1) { Text("Intensity") }
+                Toggle("Pause in Low Power Mode", isOn: $haptics.pauseInLowPower)
                 Text("Intensity: \(Int(haptics.intensity * 100))%")
                 Text("Vibrations follow decoded audio, while Play is onscreen. Vocals emphasis is a frequency filter, not vocal isolation. Streaming formats that don’t expose decoded PCM cannot drive haptics.")
                     .font(.caption).foregroundColor(.secondary)

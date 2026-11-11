@@ -4,6 +4,8 @@ import SwiftUI
 @main
 struct PlayApp: App {
     @StateObject private var library: LibraryStore
+    @AppStorage("appearance.mode") private var theme = "Dark"
+    @AppStorage("appearance.systemFont") private var systemFont = false
     init() {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-uiTesting") {
@@ -24,6 +26,9 @@ struct PlayApp: App {
             return
         }
         #endif
+        if UserDefaults.standard.bool(forKey: "appearance.randomAccent"), let color = PlayTheme.palette.randomElement() {
+            UserDefaults.standard.set(color, forKey: "appearance.accent")
+        }
         _library = StateObject(wrappedValue: LibraryStore())
     }
     var body: some Scene {
@@ -35,8 +40,8 @@ struct PlayApp: App {
                 .environmentObject(library.player.haptics)
                 .environmentObject(library.collections)
                 .tint(PlayTheme.accent)
-                .font(.custom("Poppins-Regular", size: 15))
-                .preferredColorScheme(.dark)
+                .font(systemFont ? .system(size: 15) : .custom("Poppins-Regular", size: 15))
+                .preferredColorScheme(theme == "System" ? nil : theme == "Light" ? .light : .dark)
         }
     }
 }

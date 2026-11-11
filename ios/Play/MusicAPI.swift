@@ -1,8 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-only
 import Foundation
+import Network
 import YouTubeKit
 
 actor MusicAPI {
+    let lyricCatalog = LyricCatalog()
+    private let network = NWPathMonitor()
+
+    init() { network.start(queue: DispatchQueue.global(qos: .utility)) }
+    deinit { network.cancel() }
+
+    func lyrics(for song: Song) async throws -> [LyricLine] {
+        try await lyricCatalog.lines(for: song)
+    }
+
     private let session: URLSession = {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 25
@@ -11,20 +22,27 @@ actor MusicAPI {
     }()
 
     func search(_ query: String) async throws -> [Song] {
-        return Self.parseSearch(try await musicRequest("search", parameters: ["query": query, "params": "EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D"]))
+        filtered(Self.parseSearch(try await musicRequest("search", parameters: ["query": query, "params": "EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D"])))
     }
 
     func home(category: String? = nil) async throws -> [Song] {
         if let category = category { return try await search(category + " music") }
         let songs = Self.parseSearch(try await musicRequest("browse", parameters: ["browseId": "FEmusic_home"]))
         if songs.isEmpty { return try await search("popular music") }
-        return songs
+        return filtered(songs)
     }
 
     func related(to song: Song) async throws -> [Song] {
         let songs = Self.parseSearch(try await musicRequest("next", parameters: ["videoId": song.id, "isAudioOnly": true]))
-        if !songs.isEmpty { return songs.filter { $0.id != song.id } }
+        if !songs.isEmpty { return filtered(songs).filter { $0.id != song.id } }
         return try await search(song.artist).filter { $0.id != song.id }
+    }
+
+    private func filtered(_ songs: [Song]) -> [Song] {
+        let defaults = UserDefaults.standard
+        let hideExplicit = defaults.bool(forKey: "content.hideExplicit")
+        let hideVideos = defaults.bool(forKey: "content.hideVideos")
+        return songs.filter { !(hideExplicit && $0.explicit == true) && !(hideVideos && $0.musicVideo == true) }
     }
 
     private func musicRequest(_ endpoint: String, parameters: [String: Any]) async throws -> Any {
@@ -54,6 +72,20 @@ actor MusicAPI {
             guard let value = value as? [String: Any] else { return "" }
             return value["simpleText"] as? String ?? (value["runs"] as? [[String: Any]] ?? []).compactMap { $0["text"] as? String }.joined()
         }
+        func explicit(_ row: [String: Any]) -> Bool {
+            let badges = (row["badges"] as? [[String: Any]] ?? []) + (row["subtitleBadges"] as? [[String: Any]] ?? [])
+            return badges.contains {
+                let renderer = $0["musicInlineBadgeRenderer"] as? [String: Any]
+                let icon = renderer?["icon"] as? [String: Any]
+                return icon?["iconType"] as? String == "MUSIC_EXPLICIT_BADGE"
+            }
+        }
+        func video(_ watch: [String: Any]?) -> Bool {
+            let config = watch?["watchEndpointMusicSupportedConfigs"] as? [String: Any]
+            let music = config?["watchEndpointMusicConfig"] as? [String: Any]
+            let type = music?["musicVideoType"] as? String
+            return type == "MUSIC_VIDEO_TYPE_OMV" || type == "MUSIC_VIDEO_TYPE_UGC"
+        }
         func visit(_ value: Any) {
             if let dictionary = value as? [String: Any] {
                 if let row = dictionary["playlistPanelVideoRenderer"] as? [String: Any], let id = row["videoId"] as? String {
@@ -63,7 +95,8 @@ actor MusicAPI {
                     if !name.isEmpty, seen.insert(id).inserted {
                         songs.append(Song(id: id, title: name, artist: text(row["shortBylineText"]),
                                           artwork: (images.last?["url"] as? String).flatMap(URL.init(string:)),
-                                          duration: Self.duration(text(row["lengthText"]))))
+                                          duration: Self.duration(text(row["lengthText"])), explicit: explicit(row),
+                                          musicVideo: video((row["navigationEndpoint"] as? [String: Any])?["watchEndpoint"] as? [String: Any])))
                     }
                     return
                 }
@@ -82,7 +115,8 @@ actor MusicAPI {
                     if !name.isEmpty, seen.insert(id).inserted {
                         songs.append(Song(id: id, title: name, artist: artistRuns.first?["text"] as? String ?? "Unknown artist",
                                           artwork: (images.last?["url"] as? String).flatMap(URL.init(string:)),
-                                          duration: artistRuns.compactMap { ($0["text"] as? String).flatMap(Self.duration) }.last))
+                                          duration: artistRuns.compactMap { ($0["text"] as? String).flatMap(Self.duration) }.last,
+                                          explicit: explicit(row), musicVideo: video(watch)))
                     }
                     return
                 }
@@ -125,7 +159,8 @@ actor MusicAPI {
                     if let id = id, !title.isEmpty, seen.insert(id).inserted {
                         songs.append(Song(id: id, title: title, artist: artist,
                                           artwork: (thumbnails?.last?["url"] as? String).flatMap(URL.init(string:)), duration: fixedDuration ?? duration,
-                                          album: albumRun?["text"] as? String, albumID: browseID(albumRun), artistID: browseID(runs(1).first)))
+                                          album: albumRun?["text"] as? String, albumID: browseID(albumRun), artistID: browseID(runs(1).first),
+                                          explicit: explicit(row), musicVideo: video(watch ?? (runs(0).first?["navigationEndpoint"] as? [String: Any])?["watchEndpoint"] as? [String: Any])))
                     }
                     return
                 }
@@ -146,28 +181,17 @@ actor MusicAPI {
 
     func stream(for song: Song) async throws -> URL {
         let streams = try await YouTube(videoID: song.id, methods: [.local]).streams
-        guard let stream = streams.filterAudioOnly().filter({ $0.fileExtension == .m4a }).highestAudioBitrateStream() else {
+        let compatible = streams.filterAudioOnly().filter { $0.fileExtension == .m4a }
+        let defaults = UserDefaults.standard
+        let quality = defaults.string(forKey: "player.quality") ?? "Automatic"
+        let metered = defaults.bool(forKey: "player.metered") || network.currentPath.isExpensive || network.currentPath.isConstrained
+        let low = quality == "Low" || (quality == "Automatic" && metered)
+        let chosen = low ? compatible.min { ($0.averageBitrate ?? $0.bitrate ?? Int.max) < ($1.averageBitrate ?? $1.bitrate ?? Int.max) } : compatible.highestAudioBitrateStream()
+        guard let stream = chosen else {
             throw PlayError.message("No compatible audio stream is available for this song.")
         }
         try await stream.waitUntilAvailable()
         return stream.url
-    }
-
-    func lyrics(for song: Song) async throws -> [LyricLine] {
-        var url = URLComponents(string: "https://lrclib.net/api/search")!
-        url.queryItems = [URLQueryItem(name: "track_name", value: song.title), URLQueryItem(name: "artist_name", value: song.artist)]
-        var request = URLRequest(url: url.url!)
-        request.setValue("Play/1.0 (https://github.com/highrise14752-a11y/play)", forHTTPHeaderField: "User-Agent")
-        let (data, response) = try await session.data(for: request)
-        try check(response)
-        struct Record: Decodable { let duration: Double?; let syncedLyrics: String?; let plainLyrics: String? }
-        let records = try JSONDecoder().decode([Record].self, from: data).sorted {
-            if ($0.syncedLyrics != nil) != ($1.syncedLyrics != nil) { return $0.syncedLyrics != nil }
-            guard let duration = song.duration else { return false }
-            return abs(($0.duration ?? 0) - duration) < abs(($1.duration ?? 0) - duration)
-        }
-        guard let record = records.first else { return [] }
-        return LyricsParser.parse(record.syncedLyrics ?? record.plainLyrics ?? "")
     }
 
     func download(_ url: URL) async throws -> URL {

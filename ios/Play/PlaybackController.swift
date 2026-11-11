@@ -5,6 +5,14 @@ import Foundation
 
 enum PlayRepeatMode: Int, CaseIterable { case off = 0, one = 1, all = 2 }
 
+struct SavedQueue: Codable {
+    let current: Song
+    let songs: [Song]
+    let position: Double
+    let shuffle: Bool
+    let repeatMode: Int
+}
+
 @MainActor
 final class PlaybackController: ObservableObject {
     @Published private(set) var current: Song?
@@ -35,6 +43,8 @@ final class PlaybackController: ObservableObject {
     private var timeObserver: Any?
     private var statusObserver: NSKeyValueObservation?
     private var itemObserver: NSKeyValueObservation?
+    private var volumeObserver: NSKeyValueObservation?
+    private var mutedPause = false
     private var notifications: [NSObjectProtocol] = []
     private var remoteTargets: [(MPRemoteCommand, Any)] = []
     private var loadTask: Task<Void, Never>?
@@ -49,13 +59,37 @@ final class PlaybackController: ObservableObject {
     private var lastPosition = 0.0
     private var sleepTask: Task<Void, Never>?
     private var playedHistory: [Song] = []
+    private let queueFile: URL?
+    private var deferredItem = false
+    private var lastQueueSave = Date.distantPast
+    private var failedTracks = Set<String>()
+    private var lastSkip = Date.distantPast
+    private var skipDirection = 0
+    private var skipCount = 0
 
-    init(api: MusicAPI, downloadDirectory: URL? = nil) {
+    init(api: MusicAPI, downloadDirectory: URL? = nil, queueFile: URL? = nil) {
         self.api = api
         self.downloadDirectory = downloadDirectory ?? LibraryStore.downloads
+        self.queueFile = queueFile
+        if UserDefaults.standard.bool(forKey: "player.keepShuffle") {
+            shuffleEnabled = UserDefaults.standard.bool(forKey: "player.savedShuffle")
+        }
+        if UserDefaults.standard.bool(forKey: "player.persistentQueue"),
+           let queueFile = queueFile, let data = try? Data(contentsOf: queueFile),
+           let saved = try? JSONDecoder().decode(SavedQueue.self, from: data),
+           saved.position.isFinite, saved.position >= 0, saved.songs.contains(where: { $0.id == saved.current.id }) {
+            current = saved.current
+            queue = saved.songs
+            duration = saved.current.duration ?? 0
+            position = saved.position
+            pendingPosition = position
+            shuffleEnabled = saved.shuffle
+            repeatMode = PlayRepeatMode(rawValue: saved.repeatMode) ?? .off
+            deferredItem = true
+        }
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.1, preferredTimescale: 600), queue: .main) { [weak self] time in
             Task { @MainActor in
-                guard let self = self else { return }
+                guard let self = self, !self.deferredItem, !self.resolving else { return }
                 let seconds = time.seconds
                 let delta = seconds - self.lastPosition
                 if self.isPlaying && delta > 0 && delta < 2 { self.onListeningTime?(delta) }
@@ -63,6 +97,7 @@ final class PlaybackController: ObservableObject {
                 if seconds.isFinite && self.position != max(0, seconds) { self.position = max(0, seconds) }
                 let length = self.player.currentItem?.duration.seconds ?? 0
                 if length.isFinite && length > 0 && abs(self.duration - length) > 0.01 { self.updateDuration(length) }
+                if self.isPlaying && Date().timeIntervalSince(self.lastQueueSave) >= 15 { self.persistQueue() }
             }
         }
         statusObserver = player.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
@@ -73,8 +108,12 @@ final class PlaybackController: ObservableObject {
                 self?.updateNowPlaying()
                 if let self = self {
                     if self.isPlaying, self.loggedRequest != self.requestID, let song = self.current {
+                        self.failedTracks.removeAll()
                         self.loggedRequest = self.requestID; self.onTrackStarted?(song)
-                    } else if player.timeControlStatus == .paused { self.onPaused?() }
+                    } else if player.timeControlStatus == .paused {
+                        self.onPaused?()
+                        if !self.resolving { self.persistQueue() }
+                    }
                 }
             }
         }
@@ -107,8 +146,29 @@ final class PlaybackController: ObservableObject {
             let reason = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
             if reason == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue {
                 Task { @MainActor in self?.suspendForSystemEvent() }
+            } else if reason == AVAudioSession.RouteChangeReason.newDeviceAvailable.rawValue {
+                Task { @MainActor in
+                    guard let self = self, self.current != nil, !self.sharedSessionActive,
+                          UserDefaults.standard.bool(forKey: "player.bluetoothStart") else { return }
+                    let output = AVAudioSession.sharedInstance().currentRoute.outputs
+                    if output.contains(where: { [.bluetoothA2DP, .bluetoothLE, .bluetoothHFP].contains($0.portType) }) { self.resume() }
+                }
             }
         })
+        volumeObserver = AVAudioSession.sharedInstance().observe(\.outputVolume, options: [.new]) { [weak self] session, _ in
+            let volume = session.outputVolume
+            Task { @MainActor in
+                guard let self = self, !self.sharedSessionActive,
+                      UserDefaults.standard.bool(forKey: "player.pauseAtZero") else { return }
+                if volume == 0 && self.isPlaying {
+                    self.mutedPause = true
+                    self.player.pause()
+                } else if volume > 0 && self.mutedPause {
+                    self.mutedPause = false
+                    self.resume()
+                }
+            }
+        }
         configureRemoteCommands()
     }
 
@@ -121,13 +181,16 @@ final class PlaybackController: ObservableObject {
         for (command, token) in remoteTargets { command.removeTarget(token) }
     }
 
-    func play(_ song: Song, queue: [Song], startAt: Double = 0, autoplay: Bool = true, preserveLocalSuspension: Bool = false, rememberPrevious: Bool = true) {
+    func play(_ song: Song, queue: [Song], startAt: Double = 0, autoplay: Bool = true, preserveLocalSuspension: Bool = false, rememberPrevious: Bool = true, retrying: Bool = false) {
         if interceptSong?(song) == true { return }
         if rememberPrevious, let old = current, old.id != song.id {
             playedHistory.append(old)
             if playedHistory.count > 100 { playedHistory.removeFirst() }
         }
         if !preserveLocalSuspension { isLocallySuspended = false }
+        if !retrying { failedTracks.removeAll() }
+        deferredItem = false
+        mutedPause = false
         loadTask?.cancel()
         lyricsTask?.cancel()
         requestID = UUID()
@@ -137,8 +200,8 @@ final class PlaybackController: ObservableObject {
         self.queue = allowed.contains(where: { $0.id == song.id }) ? allowed : [song]
         current = song
         lyrics = []
-        position = 0
-        lastPosition = 0
+        position = max(0, startAt)
+        lastPosition = position
         duration = song.duration ?? 0
         error = nil
         player.pause()
@@ -146,6 +209,7 @@ final class PlaybackController: ObservableObject {
         haptics.attach(to: nil)
         resolving = true; pendingPosition = max(0, startAt); pendingAutoplay = autoplay && !isLocallySuspended
         loading = true
+        persistQueue()
         lyricsLoading = true
         updateNowPlaying()
         lyricsTask = Task { [weak self] in
@@ -155,7 +219,17 @@ final class PlaybackController: ObservableObject {
                 guard !Task.isCancelled, self.requestID == request else { return }
                 self.lyrics = lines
             } catch { /* Lyrics absence never prevents playback. */ }
-            if self.requestID == request { self.lyricsLoading = false }
+            guard self.requestID == request, !Task.isCancelled else { return }
+            self.lyricsLoading = false
+            let defaults = UserDefaults.standard
+            guard defaults.bool(forKey: "lyrics.preload"),
+                  let index = self.queue.firstIndex(where: { $0.id == song.id }) else { return }
+            let count = min(10, max(1, defaults.integer(forKey: "lyrics.preloadCount")))
+            let upcoming = Array(self.queue.dropFirst(index + 1).prefix(count))
+            for next in upcoming {
+                guard !Task.isCancelled else { break }
+                _ = try? await self.api.lyrics(for: next)
+            }
         }
         loadTask = Task { [weak self] in
             guard let self = self else { return }
@@ -163,10 +237,11 @@ final class PlaybackController: ObservableObject {
                 let url: URL
                 if let file = song.localFile {
                     let local = try DownloadFile.url(filename: file, directory: self.downloadDirectory)
-                    guard FileManager.default.fileExists(atPath: local.path) else {
-                        throw PlayError.message("The downloaded file is missing. Import or download the song again.")
+                    if FileManager.default.fileExists(atPath: local.path) { url = local }
+                    else if !song.isLocal { url = try await self.api.stream(for: song) }
+                    else {
+                        throw PlayError.message("The imported file is missing. Import the song again.")
                     }
-                    url = local
                 } else {
                     guard !song.isLocal else { throw PlayError.message("Import this local audio file again before playing it.") }
                     url = try await self.api.stream(for: song)
@@ -184,9 +259,7 @@ final class PlaybackController: ObservableObject {
                     Task { @MainActor in
                         guard let self = self, self.requestID == request else { return }
                         if item.status == .failed {
-                            self.error = item.error?.localizedDescription ?? "Could not play this audio."
-                            self.loading = false
-                            self.resolving = false
+                            self.handleFailure(item.error?.localizedDescription ?? "Could not play this audio.")
                         }
                     }
                 }
@@ -194,18 +267,43 @@ final class PlaybackController: ObservableObject {
                 self.haptics.attach(to: item)
                 self.player.seek(to: CMTime(seconds: self.pendingPosition, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
                     Task { @MainActor in
-                        guard let self = self, self.requestID == request else { return }
+                        guard let self = self, self.requestID == request, self.resolving else { return }
                         self.resolving = false; self.loading = false
                         if self.pendingAutoplay { self.player.play() } else { self.player.pause() }
                     }
                 }
             } catch {
                 guard !Task.isCancelled, self.requestID == request else { return }
-                self.error = error.localizedDescription
-                self.loading = false
-                self.resolving = false
+                self.handleFailure(error.localizedDescription)
             }
         }
+    }
+
+    private func handleFailure(_ message: String) {
+        loading = false
+        resolving = false
+        guard let current = current else { error = message; return }
+        failedTracks.insert(current.id)
+        if pendingAutoplay, !sharedSessionActive, UserDefaults.standard.bool(forKey: "player.skipErrors"),
+           let index = queue.firstIndex(where: { $0.id == current.id }),
+           let next = queue.dropFirst(index + 1).first(where: { !failedTracks.contains($0.id) }) {
+            play(next, queue: queue, retrying: true)
+        } else { error = message }
+    }
+
+    func persistQueue() {
+        lastQueueSave = Date()
+        guard let queueFile = queueFile else { return }
+        guard UserDefaults.standard.bool(forKey: "player.persistentQueue") else {
+            if FileManager.default.fileExists(atPath: queueFile.path) { try? FileManager.default.removeItem(at: queueFile) }
+            return
+        }
+        guard !sharedSessionActive, let current = current else { return }
+        let index = queue.firstIndex(where: { $0.id == current.id }) ?? 0
+        let start = max(0, index - 500)
+        let tracks = Array(queue.dropFirst(start).prefix(2000))
+        let saved = SavedQueue(current: current, songs: tracks, position: position, shuffle: shuffleEnabled, repeatMode: repeatMode.rawValue)
+        if let data = try? JSONEncoder().encode(saved) { try? data.write(to: queueFile, options: .atomic) }
     }
 
     func toggle() { isPlaying ? pause() : resume() }
@@ -221,11 +319,12 @@ final class PlaybackController: ObservableObject {
     }
     func pause() {
         if interceptControl?("pause", nil) == true { return }
-        pendingAutoplay = false; player.pause()
+        mutedPause = false; pendingAutoplay = false; player.pause()
     }
     func resume() {
         isLocallySuspended = false
         if interceptControl?("play", nil) == true { return }
+        if deferredItem, let song = current { play(song, queue: queue, startAt: position); return }
         pendingAutoplay = true
         do { try AVAudioSession.sharedInstance().setActive(true); player.play() }
         catch { self.error = error.localizedDescription }
@@ -234,6 +333,7 @@ final class PlaybackController: ObservableObject {
     func suspendForSystemEvent() {
         isLocallySuspended = true
         pendingAutoplay = false
+        mutedPause = false
         player.pause()
         haptics.setPlayback(playing: false)
     }
@@ -242,9 +342,20 @@ final class PlaybackController: ObservableObject {
         if interceptControl?("seek_to", seconds) == true { return }
         position = max(0, min(seconds, duration > 0 ? duration : seconds))
         pendingPosition = position
-        if resolving { return }
+        if resolving || deferredItem { return }
         player.seek(to: CMTime(seconds: position, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
         updateNowPlaying()
+    }
+    func skipTime(_ direction: Int) {
+        guard current != nil else { return }
+        let now = Date()
+        if UserDefaults.standard.bool(forKey: "player.progressiveSeek"),
+           direction == skipDirection, now.timeIntervalSince(lastSkip) < 0.8 {
+            skipCount = min(skipCount + 1, 6)
+        } else { skipCount = 1 }
+        lastSkip = now
+        skipDirection = direction
+        seek(position + Double(direction * skipCount * 10))
     }
     func next() {
         if interceptControl?("skip_next", nil) == true { return }
@@ -272,10 +383,13 @@ final class PlaybackController: ObservableObject {
     func setRepeat(_ mode: PlayRepeatMode) {
         if interceptControl?("set_repeat_mode", Double(mode.rawValue)) == true { return }
         repeatMode = mode
+        persistQueue()
     }
     func setShuffle(_ enabled: Bool) {
         if interceptControl?("set_shuffle_enabled", enabled ? 1 : 0) == true { return }
         shuffleEnabled = enabled
+        if UserDefaults.standard.bool(forKey: "player.keepShuffle") { UserDefaults.standard.set(enabled, forKey: "player.savedShuffle") }
+        persistQueue()
     }
     func applyRoomModes(repeatMode: Int, shuffle: Bool) {
         self.repeatMode = PlayRepeatMode(rawValue: repeatMode) ?? .off; self.shuffleEnabled = shuffle
@@ -332,6 +446,10 @@ final class PlaybackController: ObservableObject {
         add(commands.togglePlayPauseCommand) { player, _ in player.toggle() }
         add(commands.nextTrackCommand) { player, _ in player.next() }
         add(commands.previousTrackCommand) { player, _ in player.previous() }
+        commands.skipForwardCommand.preferredIntervals = [10]
+        commands.skipBackwardCommand.preferredIntervals = [10]
+        add(commands.skipForwardCommand) { player, _ in player.skipTime(1) }
+        add(commands.skipBackwardCommand) { player, _ in player.skipTime(-1) }
         add(commands.changePlaybackPositionCommand) { player, event in
             if let change = event as? MPChangePlaybackPositionCommandEvent { player.seek(change.positionTime) }
         }

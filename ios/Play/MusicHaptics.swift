@@ -158,6 +158,9 @@ final class MusicHaptics: ObservableObject {
     @Published var enabled: Bool { didSet { UserDefaults.standard.set(enabled, forKey: "haptics.enabled"); refresh() } }
     @Published var intensity: Double { didSet { UserDefaults.standard.set(intensity, forKey: "haptics.intensity"); updateOutput() } }
     @Published var mode: String { didSet { UserDefaults.standard.set(mode, forKey: "haptics.mode"); refresh() } }
+    @Published var pauseInLowPower: Bool {
+        didSet { UserDefaults.standard.set(pauseInLowPower, forKey: "haptics.pauseInLowPower"); updateOutput() }
+    }
     @Published private(set) var status = "Off"
     private let output: HapticOutput
     private weak var item: AVPlayerItem?
@@ -165,6 +168,7 @@ final class MusicHaptics: ObservableObject {
     private var attachTask: Task<Void, Never>?
     private var playing = false
     private var visible = true
+    private var powerObserver: NSObjectProtocol?
 
     init() {
         var info = utsname()
@@ -175,7 +179,13 @@ final class MusicHaptics: ObservableObject {
         enabled = UserDefaults.standard.bool(forKey: "haptics.enabled")
         intensity = UserDefaults.standard.object(forKey: "haptics.intensity") as? Double ?? 0.5
         mode = UserDefaults.standard.string(forKey: "haptics.mode") ?? HapticMode.whole.rawValue
+        pauseInLowPower = UserDefaults.standard.object(forKey: "haptics.pauseInLowPower") as? Bool ?? true
+        powerObserver = NotificationCenter.default.addObserver(forName: .NSProcessInfoPowerStateDidChange, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.updateOutput() }
+        }
     }
+
+    deinit { if let observer = powerObserver { NotificationCenter.default.removeObserver(observer) } }
 
     func attach(to item: AVPlayerItem?) { self.item = item; refresh() }
     func setPlayback(playing: Bool) { self.playing = playing; updateOutput() }
@@ -189,7 +199,10 @@ final class MusicHaptics: ObservableObject {
             feedback.impactOccurred(intensity: CGFloat(self.intensity))
         }
     }
-    private func updateOutput() { output.configure(enabled: supported && enabled && playing && visible, intensity: intensity, generation: generation) }
+    private func updateOutput() {
+        let lowPower = pauseInLowPower && ProcessInfo.processInfo.isLowPowerModeEnabled
+        output.configure(enabled: supported && enabled && playing && visible && !lowPower, intensity: intensity, generation: generation)
+    }
     private func refresh() {
         attachTask?.cancel()
         generation = UUID()

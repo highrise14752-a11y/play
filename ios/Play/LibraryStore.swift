@@ -8,6 +8,7 @@ final class LibraryStore: ObservableObject {
     @Published private(set) var downloading = Set<String>()
     @Published var error: String?
     @Published private(set) var measuredDurations: [String: Double] = [:]
+    @Published private(set) var searchHistory: [String] = UserDefaults.standard.stringArray(forKey: "search.history") ?? []
     let api: MusicAPI
     let player: PlaybackController
     let collections: UserCollections
@@ -27,7 +28,7 @@ final class LibraryStore: ObservableObject {
         collections = UserCollections(directory: root)
         let api = MusicAPI()
         self.api = api
-        self.player = PlaybackController(api: api, downloadDirectory: downloadDirectory)
+        self.player = PlaybackController(api: api, downloadDirectory: downloadDirectory, queueFile: root.appendingPathComponent("queue.json"))
         player.onTrackStarted = { [weak collections] song in collections?.started(song) }
         player.onListeningTime = { [weak collections] seconds in collections?.listened(seconds) }
         player.onPaused = { [weak collections] in collections?.flush() }
@@ -82,6 +83,45 @@ final class LibraryStore: ObservableObject {
 
     func play(_ song: Song, in queue: [Song]) {
         player.play(saved(song), queue: queue.map(saved))
+    }
+
+    func toggleLike(_ song: Song) {
+        let track = saved(song)
+        if !contains(track) { save(track) }
+        collections.toggleLike(track)
+        if collections.liked(track), !track.isLocal, track.localFile == nil,
+           UserDefaults.standard.bool(forKey: "player.downloadLikes") {
+            Task { await download(track) }
+        }
+    }
+
+    func rememberSearch(_ term: String) {
+        guard !UserDefaults.standard.bool(forKey: "privacy.pauseSearch") else { return }
+        let term = String(term.trimmingCharacters(in: .whitespacesAndNewlines).prefix(250))
+        guard !term.isEmpty else { return }
+        searchHistory.removeAll { $0.caseInsensitiveCompare(term) == .orderedSame }
+        searchHistory.insert(term, at: 0)
+        searchHistory = Array(searchHistory.prefix(30))
+        UserDefaults.standard.set(searchHistory, forKey: "search.history")
+    }
+
+    func clearSearchHistory() {
+        searchHistory = []
+        UserDefaults.standard.removeObject(forKey: "search.history")
+    }
+
+    func clearDownloads() {
+        for index in songs.indices {
+            let song = songs[index]
+            guard !song.isLocal, !downloading.contains(song.id), let file = song.localFile else { continue }
+            do {
+                let url = try DownloadFile.url(filename: file, directory: downloadDirectory)
+                if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
+                songs[index].localFile = nil
+                songsByID[song.id] = songs[index]
+            } catch { self.error = "Could not remove some downloads: \(error.localizedDescription)" }
+        }
+        persist()
     }
 
     func merge(_ incoming: [Song]) {

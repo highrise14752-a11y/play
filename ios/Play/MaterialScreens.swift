@@ -1,17 +1,36 @@
 // SPDX-License-Identifier: GPL-3.0-only
 import SwiftUI
 import UniformTypeIdentifiers
+import UIKit
 
 enum PlayTheme {
-    static var background: Color { (UserDefaults.standard.object(forKey: "appearance.pureBlack") as? Bool ?? true) ? .black : color(0x141214) }
-    static let surface = Color(red: 0.125, green: 0.12, blue: 0.125)
-    static let outline = Color.white.opacity(0.17)
+    static let palette = [0xFFB3BB, 0xCFB9FF, 0xA1D6B2, 0xE5D88A, 0xA2CBFA]
+    static var background: Color {
+        let black = UserDefaults.standard.object(forKey: "appearance.pureBlack") as? Bool ?? true
+        return Color(uiColor: UIColor { traits in
+            if traits.userInterfaceStyle != .dark { return .systemBackground }
+            return black ? .black : UIColor(red: 0.08, green: 0.07, blue: 0.08, alpha: 1)
+        })
+    }
+    static let surface = Color(uiColor: UIColor { traits in
+        if traits.userInterfaceStyle != .dark { return .secondarySystemBackground }
+        return UIColor(red: 0.125, green: 0.12, blue: 0.125, alpha: 1)
+    })
+    static let outline = Color.primary.opacity(0.17)
     static var accent: Color {
-        let value = UserDefaults.standard.integer(forKey: "appearance.accent")
-        return color(value == 0 ? 0xFFB3BB : value)
+        color(UserDefaults.standard.object(forKey: "appearance.accent") as? Int ?? 0xFFB3BB)
     }
     static func color(_ hex: Int) -> Color { Color(red: Double(hex >> 16 & 255) / 255, green: Double(hex >> 8 & 255) / 255, blue: Double(hex & 255) / 255) }
-    static func font(_ size: CGFloat, weight: Font.Weight = .regular) -> Font { .custom("Poppins-Regular", size: size).weight(weight) }
+    static func font(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        if UserDefaults.standard.bool(forKey: "appearance.systemFont") { return .system(size: size, weight: weight) }
+        return .custom("Poppins-Regular", size: size).weight(weight)
+    }
+    static func rgb(_ color: Color) -> Int? {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        guard UIColor(color).getRed(&r, green: &g, blue: &b, alpha: &a) else { return nil }
+        func byte(_ value: CGFloat) -> Int { Int((max(0, min(1, value)) * 255).rounded()) }
+        return byte(r) << 16 | byte(g) << 8 | byte(b)
+    }
 }
 
 enum TrackTime {
@@ -30,11 +49,12 @@ struct RootView: View {
     @EnvironmentObject private var collections: UserCollections
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var home = HomeFeed()
-    @State private var tab = 0
+    @State private var tab = min(3, max(0, UserDefaults.standard.integer(forKey: "appearance.defaultTab")))
     @State private var showingPlayer = false
     @State private var searching = false
     @AppStorage("appearance.accent") private var accent = 0xFFB3BB
     @AppStorage("appearance.pureBlack") private var pureBlack = true
+    @AppStorage("appearance.slimNav") private var slimNav = false
     private let labels = ["Home", "Stats", "History", "Library"]
     private let icons = ["safari.fill", "chart.line.uptrend.xyaxis", "clock.fill", "square.grid.2x2.fill"]
 
@@ -49,7 +69,7 @@ struct RootView: View {
                         .accessibilityLabel("Search")
                     NavigationLink { SettingsView().navigationBarHidden(false) } label: { Image(systemName: "gearshape").font(.system(size: 23)).frame(width: 44, height: 44) }
                         .accessibilityLabel("Settings").accessibilityIdentifier("open.settings")
-                }.foregroundColor(PlayTheme.color(0xEDDADF)).padding(.horizontal, 18).padding(.vertical, 10)
+                }.foregroundColor(.primary).padding(.horizontal, 18).padding(.vertical, 10)
                 Group {
                     switch tab {
                     case 1: StatsView()
@@ -59,7 +79,7 @@ struct RootView: View {
                     }
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .background((pureBlack ? Color.black : PlayTheme.background).ignoresSafeArea()).navigationBarHidden(true)
+            .background(PlayTheme.background.ignoresSafeArea()).navigationBarHidden(true)
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 VStack(spacing: 8) {
                     MiniPlayerView(showingPlayer: $showingPlayer)
@@ -68,23 +88,24 @@ struct RootView: View {
                             Button { tab = index } label: {
                                 VStack(spacing: 5) {
                                     Image(systemName: icons[index]).font(.system(size: 21, weight: .medium))
-                                        .frame(width: 50, height: 31)
+                                        .frame(width: 50, height: slimNav ? 26 : 31)
                                         .background(Capsule().fill(index == tab ? PlayTheme.color(accent).opacity(0.3) : .clear))
-                                    Text(labels[index]).font(PlayTheme.font(11))
-                                }.foregroundColor(index == tab ? PlayTheme.color(accent) : Color(red: 0.8, green: 0.73, blue: 0.75))
-                                    .frame(maxWidth: .infinity).padding(.vertical, 10)
+                                    if !slimNav { Text(labels[index]).font(PlayTheme.font(11)) }
+                                }.foregroundColor(index == tab ? PlayTheme.color(accent) : .secondary)
+                                    .frame(maxWidth: .infinity, minHeight: 44).padding(.vertical, slimNav ? 0 : 10)
                             }.accessibilityIdentifier("tab.\(labels[index].lowercased())")
+                                .accessibilityLabel(labels[index])
                         }
-                    }.background(RoundedRectangle(cornerRadius: 27).fill(Color.black))
+                    }.background(RoundedRectangle(cornerRadius: 27).fill(PlayTheme.background))
                         .overlay(RoundedRectangle(cornerRadius: 27).stroke(PlayTheme.outline, lineWidth: 1))
-                }.padding(.horizontal, 12).padding(.top, 6).padding(.bottom, 5).background(Color.black)
+                }.padding(.horizontal, 12).padding(.top, 6).padding(.bottom, 5).background(PlayTheme.background)
             }
         }.navigationViewStyle(.stack).tint(PlayTheme.color(accent))
         .sheet(isPresented: $showingPlayer) { NavigationView { PlayerView() }.navigationViewStyle(.stack) }
         .sheet(isPresented: $searching) { NavigationView { SearchView() }.navigationViewStyle(.stack) }
         .onChange(of: scenePhase) {
             haptics.setVisible($0 == .active)
-            if $0 != .active { collections.flush() }
+            if $0 != .active { collections.flush(); library.player.persistQueue() }
         }
         .onOpenURL { together.join(link: $0.absoluteString, name: UserDefaults.standard.string(forKey: "together.name") ?? "Listener") }
         .alert("Play", isPresented: Binding(get: { library.error != nil || collections.error != nil }, set: { if !$0 { library.error = nil; collections.error = nil } })) {
@@ -103,7 +124,8 @@ struct RootView: View {
     private var loadedLocale = ""
     private var requestID = UUID()
     func load(api: MusicAPI, force: Bool = false) async {
-        let locale = (UserDefaults.standard.string(forKey: "content.language") ?? "en") + (UserDefaults.standard.string(forKey: "content.region") ?? "US")
+        let defaults = UserDefaults.standard
+        let locale = "\(defaults.string(forKey: "content.language") ?? "en")|\(defaults.string(forKey: "content.region") ?? "US")|\(defaults.bool(forKey: "content.hideExplicit"))|\(defaults.bool(forKey: "content.hideVideos"))"
         if loaded && loadedCategory == category && loadedLocale == locale && !force { return }
         let id = UUID(); requestID = id
         loading = true; error = nil
@@ -143,6 +165,11 @@ struct HomeView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var collections: UserCollections
     @ObservedObject var feed: HomeFeed
+    @AppStorage("appearance.homeChips") private var showChips = true
+    @AppStorage("content.hideExplicit") private var hideExplicit = false
+    @AppStorage("content.hideVideos") private var hideVideos = false
+    @AppStorage("content.language") private var language = "en"
+    @AppStorage("content.region") private var region = "US"
     private let moods = ["All", "Workout", "Relax", "Focus", "Sleep", "Party", "Romance", "Energy"]
     private var recent: [Song] {
         var seen = Set<String>()
@@ -151,7 +178,9 @@ struct HomeView: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 18) {
-                CategoryChips(choices: moods, selection: Binding(get: { feed.category ?? "All" }, set: { feed.category = $0 == "All" ? nil : $0 }))
+                if showChips {
+                    CategoryChips(choices: moods, selection: Binding(get: { feed.category ?? "All" }, set: { feed.category = $0 == "All" ? nil : $0 }))
+                }
                 if feed.loading && feed.songs.isEmpty { ProgressView("Loading suggestions…").frame(maxWidth: .infinity).padding(30) }
                 if let error = feed.error {
                     VStack(alignment: .leading, spacing: 12) {
@@ -206,12 +235,13 @@ struct HomeView: View {
                 }
             }.padding(.vertical, 8)
         }.refreshable { await feed.load(api: library.api, force: true) }
-        .task(id: feed.category) {
+        .task(id: "\(feed.category ?? "")|\(language)|\(region)|\(hideExplicit)|\(hideVideos)") {
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("-uiTesting") { feed.loadPreview(); return }
             #endif
             await feed.load(api: library.api)
         }
+        .onChange(of: showChips) { if !$0 { feed.category = nil } }
     }
 }
 
@@ -333,7 +363,7 @@ struct SongCollectionView: View {
             ForEach(songs) { song in
                 SongRow(song: song, queue: songs)
                     .swipeActions { if let id = playlistID { Button("Remove", role: .destructive) { collections.remove(song, from: id) } } }
-                    .listRowBackground(Color.black).listRowSeparator(.hidden)
+                    .listRowBackground(PlayTheme.background).listRowSeparator(.hidden)
             }.onMove { from, to in if let id = playlistID { collections.moveSongs(in: id, from: from, to: to) } }
         }.listStyle(.plain).navigationTitle(title).navigationBarTitleDisplayMode(.inline).navigationBarHidden(false)
     }
@@ -343,14 +373,15 @@ struct AutoCollectionView: View {
     let kind: String
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var collections: UserCollections
+    @AppStorage("content.topCount") private var topCount = 50
     private var songs: [Song] {
         switch kind {
         case "Liked": return library.songs.filter { collections.liked($0) }
         case "Downloaded": return library.songs.filter { $0.localFile != nil }
-        default: return collections.state.totals.values.sorted { $0.seconds > $1.seconds }.prefix(50).map(\.song)
+        default: return collections.state.totals.values.sorted { $0.seconds > $1.seconds }.prefix(min(200, max(1, topCount))).map(\.song)
         }
     }
-    var body: some View { SongCollectionView(title: kind, songs: songs) }
+    var body: some View { SongCollectionView(title: kind == "Top" ? "My top \(topCount)" : kind, songs: songs) }
 }
 
 struct GroupedCollectionView: View {

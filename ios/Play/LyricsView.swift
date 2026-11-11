@@ -8,6 +8,7 @@ struct LyricsView: View {
     @AppStorage("lyrics.follow") private var autoFollow = true
     @AppStorage("lyrics.click") private var clickToSeek = true
     @AppStorage("lyrics.size") private var textSize = 28.0
+    @AppStorage("lyrics.spacing") private var lineSpacing = 22.0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var browsing = false
     @State private var resumeTask: Task<Void, Never>?
@@ -29,10 +30,10 @@ struct LyricsView: View {
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
                         ScrollView {
-                            LazyVStack(spacing: 22) {
+                            LazyVStack(spacing: lineSpacing) {
                                 ForEach(player.lyrics) { line in
                                     let highlighted = active == line.id
-                                    Text(line.text.isEmpty ? "♪" : line.text)
+                                    lyricText(line, highlighted: highlighted)
                                         .font(PlayTheme.font(CGFloat(textSize), weight: highlighted ? .bold : .semibold))
                                         .multilineTextAlignment(textAlignment)
                                         .frame(maxWidth: .infinity, alignment: alignment)
@@ -42,7 +43,7 @@ struct LyricsView: View {
                                         .shadow(color: style == "Glow" && highlighted ? PlayTheme.accent.opacity(0.7) : .clear, radius: 9)
                                         .offset(x: style == "Slide" && !highlighted ? -10 : 0)
                                         .overlay {
-                                            if style == "Karaoke", highlighted {
+                                            if style == "Karaoke", highlighted, !line.words.contains(where: { $0.time != nil }) {
                                                 GeometryReader { measured in
                                                     Text(line.text).font(PlayTheme.font(CGFloat(textSize), weight: .bold))
                                                         .multilineTextAlignment(textAlignment)
@@ -87,6 +88,15 @@ struct LyricsView: View {
     private func follow(_ proxy: ScrollViewProxy) {
         guard autoFollow, !browsing, let active = active else { return }
         withAnimation(animation) { proxy.scrollTo(active, anchor: .center) }
+    }
+    private func lyricText(_ line: LyricLine, highlighted: Bool) -> Text {
+        guard style == "Karaoke", highlighted, line.words.contains(where: { $0.time != nil }) else {
+            return Text(line.text.isEmpty ? "♪" : line.text)
+        }
+        return line.words.reduce(Text("")) { result, word in
+            let sung = word.time.map { $0 <= player.position } ?? false
+            return result + Text(word.text).foregroundColor(sung ? PlayTheme.accent : .primary)
+        }
     }
     private func progress(_ line: LyricLine) -> Double {
         guard let start = line.time, let index = player.lyrics.firstIndex(where: { $0.id == line.id }) else { return 0 }
