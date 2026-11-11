@@ -5,6 +5,24 @@ import UIKit
 @testable import Play
 
 final class PlayTests: XCTestCase {
+    func testM3UImportsYouTubeLinksAndMatchesAndroidMetadataInOrder() async throws {
+        let source = """
+        #EXTM3U
+        #EXTINF:338,Test Artist - First song
+        https://youtu.be/khnokW3Mw24
+        #EXTINF:-1,Other Artist - Second song
+        /storage/emulated/0/Music/second.m4a
+        #EXTINF:338,Test Artist - First song
+        https://www.youtube.com/watch?v=khnokW3Mw24
+        """
+        let entries = try M3UImport.parse(Data(source.utf8))
+        let saved = Song(id: "local:existing", title: "Second song", artist: "Other Artist", localFile: "audio.m4a")
+        let result = try await M3UImport.resolve(entries, saved: [saved], api: MusicAPI())
+        XCTAssertEqual(result.map(\.id), ["khnokW3Mw24", saved.id])
+        XCTAssertEqual(result.first?.duration, 338)
+        XCTAssertEqual(result.last?.localFile, "audio.m4a")
+    }
+
     func testAndroidBackupImportsOnlineLibraryInPlaylistOrder() throws {
         let file = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "AndroidSample", withExtension: "backup"))
         let zone = try XCTUnwrap(TimeZone(secondsFromGMT: 19_800))

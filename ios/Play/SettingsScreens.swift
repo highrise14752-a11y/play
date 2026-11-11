@@ -637,13 +637,15 @@ struct BackupSettingsView: View {
     @State private var importing = false
     @State private var status: String?
     @State private var restoring = false
+    @State private var importingPlaylist = false
     var body: some View {
         Form {
             Button("Create backup") { collections.flush(); exporting = true }
-            Button("Restore backup") { importing = true }.disabled(restoring)
+            Button("Restore backup") { importingPlaylist = false; importing = true }.disabled(restoring)
+            Button("Import M3U playlist") { importingPlaylist = true; importing = true }.disabled(restoring)
             Text("Backs up your library, playlists, favorites, history and stats. Audio files stay on this device. Restoring merges with existing data.").font(.caption).foregroundColor(.secondary)
             Text("Restore also accepts a Play backup from Android. It imports online songs, playlists, favorites, and listening history.").font(.caption).foregroundColor(.secondary)
-            if restoring { ProgressView("Reading backup…") }
+            if restoring { ProgressView(importingPlaylist ? "Matching playlist songs…" : "Reading backup…") }
             if let status = status { Text(status).font(.caption) }
         }.navigationTitle("Backup and restore").navigationBarTitleDisplayMode(.inline)
             .fileExporter(isPresented: $exporting, document: BackupDocument(backup: PlayBackup(songs: library.songs, collections: collections.state)), contentType: .json, defaultFilename: "Play-backup") { result in
@@ -651,7 +653,11 @@ struct BackupSettingsView: View {
             }
             .fileImporter(isPresented: $importing, allowedContentTypes: [.data]) { result in
                 switch result {
-                case .success(let url): Task { await restore(url) }
+                case .success(let url):
+                    Task {
+                        if importingPlaylist { await restorePlaylist(url) }
+                        else { await restore(url) }
+                    }
                 case .failure(let error): status = error.localizedDescription
                 }
             }
@@ -677,6 +683,27 @@ struct BackupSettingsView: View {
             }.value
             library.merge(backup.songs); collections.restore(backup.collections)
             status = library.error ?? collections.error ?? "Backup restored"
+        } catch { status = error.localizedDescription }
+    }
+    private func restorePlaylist(_ url: URL) async {
+        guard !restoring else { return }
+        restoring = true
+        status = nil
+        defer { restoring = false }
+        let access = url.startAccessingSecurityScopedResource()
+        defer { if access { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let entries = try await Task.detached(priority: .utility) {
+                let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+                guard size <= 2 * 1024 * 1024 else { throw PlayError.message("The M3U playlist is larger than 2 MB.") }
+                return try M3UImport.parse(Data(contentsOf: url))
+            }.value
+            let songs = try await M3UImport.resolve(entries, saved: library.songs, api: library.api)
+            guard !songs.isEmpty else { throw PlayError.message("No tracks in this playlist could be matched.") }
+            let name = url.deletingPathExtension().lastPathComponent
+            library.merge(songs)
+            collections.importPlaylist(PublicPlaylist(title: name, songs: songs))
+            status = library.error ?? collections.error ?? "Imported \(songs.count) of \(entries.count) playlist entries."
         } catch { status = error.localizedDescription }
     }
 }

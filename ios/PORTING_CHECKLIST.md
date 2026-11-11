@@ -301,5 +301,6 @@ Android source: `app/src/main/kotlin/com/nikhil/yt/ui/screens/settings/UpdateScr
 - Silence skipping for live streams, playback-client selection, and Android-specific audio routing. Crossfade and saved-audio silence skipping are implemented.
 - Android offload, USB audio, notification/default-link behavior and Android Auto need platform-specific iOS treatment; some require Apple entitlements.
 - Android Play backups can be imported on iOS for online songs, playlists, favorites, tags, and listening history. Android settings, downloaded audio, and local files do not transfer. iOS exports its own JSON format.
+- M3U playlist import supports YouTube song links and matches Android playlist metadata to saved or online tracks. Android file paths do not carry the audio to iOS.
 
 Previously removed Discord/integrations/donation/developer/inspiration sections are intentionally not restored.
