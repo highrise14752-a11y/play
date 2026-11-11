@@ -36,10 +36,18 @@ final class PlaybackController: ObservableObject {
     var interceptControl: ((String, Double?) -> Bool)?
     var interceptSong: ((Song) -> Bool)?
     var interceptEnqueue: ((Song, Bool) -> Bool)?
-    var sharedSessionActive = false
+    var sharedSessionActive = false { didSet { if sharedSessionActive { cancelCrossfade() } } }
     private let api: MusicAPI
     private let downloadDirectory: URL
-    private let player = AVPlayer()
+    private var player = AVPlayer()
+    private var fadePlayer: AVPlayer?
+    private var fadeTask: Task<Void, Never>?
+    private var fadeSong: Song?
+    private var fadeAttempted = false
+    private var fadeLength: Double?
+    private var silenceTask: Task<Void, Never>?
+    private var silences: [SilentSpan] = []
+    private var silenceIndex = 0
     private var timeObserver: Any?
     private var statusObserver: NSKeyValueObservation?
     private var itemObserver: NSKeyValueObservation?
@@ -87,36 +95,7 @@ final class PlaybackController: ObservableObject {
             repeatMode = PlayRepeatMode(rawValue: saved.repeatMode) ?? .off
             deferredItem = true
         }
-        timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.1, preferredTimescale: 600), queue: .main) { [weak self] time in
-            Task { @MainActor in
-                guard let self = self, !self.deferredItem, !self.resolving else { return }
-                let seconds = time.seconds
-                let delta = seconds - self.lastPosition
-                if self.isPlaying && delta > 0 && delta < 2 { self.onListeningTime?(delta) }
-                self.lastPosition = seconds.isFinite ? seconds : 0
-                if seconds.isFinite && self.position != max(0, seconds) { self.position = max(0, seconds) }
-                let length = self.player.currentItem?.duration.seconds ?? 0
-                if length.isFinite && length > 0 && abs(self.duration - length) > 0.01 { self.updateDuration(length) }
-                if self.isPlaying && Date().timeIntervalSince(self.lastQueueSave) >= 15 { self.persistQueue() }
-            }
-        }
-        statusObserver = player.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
-            Task { @MainActor in
-                self?.isPlaying = player.timeControlStatus == .playing
-                self?.haptics.setPlayback(playing: player.timeControlStatus == .playing)
-                self?.loading = player.timeControlStatus == .waitingToPlayAtSpecifiedRate
-                self?.updateNowPlaying()
-                if let self = self {
-                    if self.isPlaying, self.loggedRequest != self.requestID, let song = self.current {
-                        self.failedTracks.removeAll()
-                        self.loggedRequest = self.requestID; self.onTrackStarted?(song)
-                    } else if player.timeControlStatus == .paused {
-                        self.onPaused?()
-                        if !self.resolving { self.persistQueue() }
-                    }
-                }
-            }
-        }
+        observePlayer()
         notifications.append(NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: nil, queue: .main) { [weak self] note in
             Task { @MainActor in
                 guard let self = self, let item = note.object as? AVPlayerItem, item === self.player.currentItem else { return }
@@ -125,7 +104,7 @@ final class PlaybackController: ObservableObject {
                 if self.repeatMode == .one {
                     self.seek(0); if let song = self.current { self.onTrackStarted?(song) }; self.resume(); return
                 }
-                self.next()
+                if !self.promoteCrossfade() { self.next() }
             }
         })
         notifications.append(NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
@@ -162,6 +141,7 @@ final class PlaybackController: ObservableObject {
                       UserDefaults.standard.bool(forKey: "player.pauseAtZero") else { return }
                 if volume == 0 && self.isPlaying {
                     self.mutedPause = true
+                    self.cancelCrossfade()
                     self.player.pause()
                 } else if volume > 0 && self.mutedPause {
                     self.mutedPause = false
@@ -172,7 +152,47 @@ final class PlaybackController: ObservableObject {
         configureRemoteCommands()
     }
 
+    private func observePlayer() {
+        let observed = player
+        timeObserver = observed.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.1, preferredTimescale: 600), queue: .main) { [weak self, weak observed] time in
+            Task { @MainActor in
+                guard let self = self, observed === self.player, !self.deferredItem, !self.resolving else { return }
+                let seconds = time.seconds
+                let delta = seconds - self.lastPosition
+                if self.isPlaying && delta > 0 && delta < 2 { self.onListeningTime?(delta) }
+                self.lastPosition = seconds.isFinite ? seconds : 0
+                if seconds.isFinite && self.position != max(0, seconds) { self.position = max(0, seconds) }
+                let length = self.player.currentItem?.duration.seconds ?? 0
+                if length.isFinite && length > 0 && abs(self.duration - length) > 0.01 { self.updateDuration(length) }
+                if self.isPlaying && Date().timeIntervalSince(self.lastQueueSave) >= 15 { self.persistQueue() }
+                if self.isPlaying, seconds.isFinite {
+                    self.skipVerifiedSilence(at: seconds)
+                    self.updateCrossfade(at: seconds)
+                }
+            }
+        }
+        statusObserver = observed.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
+            Task { @MainActor in
+                guard let self = self, player === self.player else { return }
+                self.isPlaying = player.timeControlStatus == .playing
+                self.haptics.setPlayback(playing: player.timeControlStatus == .playing)
+                self.loading = player.timeControlStatus == .waitingToPlayAtSpecifiedRate
+                if self.loading && self.fadeLength != nil { self.cancelCrossfade() }
+                self.updateNowPlaying()
+                if self.isPlaying, self.loggedRequest != self.requestID, let song = self.current {
+                    self.failedTracks.removeAll()
+                    self.loggedRequest = self.requestID; self.onTrackStarted?(song)
+                } else if player.timeControlStatus == .paused {
+                    self.onPaused?()
+                    if !self.resolving { self.persistQueue() }
+                }
+            }
+        }
+    }
+
     deinit {
+        fadeTask?.cancel()
+        silenceTask?.cancel()
         loadTask?.cancel()
         lyricsTask?.cancel()
         sleepTask?.cancel()
@@ -183,6 +203,8 @@ final class PlaybackController: ObservableObject {
 
     func play(_ song: Song, queue: [Song], startAt: Double = 0, autoplay: Bool = true, preserveLocalSuspension: Bool = false, rememberPrevious: Bool = true, retrying: Bool = false) {
         if interceptSong?(song) == true { return }
+        cancelCrossfade()
+        clearSilences()
         if rememberPrevious, let old = current, old.id != song.id {
             playedHistory.append(old)
             if playedHistory.count > 100 { playedHistory.removeFirst() }
@@ -213,6 +235,38 @@ final class PlaybackController: ObservableObject {
         persistQueue()
         lyricsLoading = true
         updateNowPlaying()
+        loadLyrics(song, request: request)
+        loadTask = Task { [weak self] in
+            guard let self = self else { return }
+            do {
+                let asset = try await self.asset(for: song)
+                guard !Task.isCancelled, self.requestID == request else { return }
+                let audio = AVAudioSession.sharedInstance()
+                try audio.setCategory(.playback, mode: .default)
+                try audio.setActive(true)
+                let measured = try? await asset.load(.duration).seconds
+                guard !Task.isCancelled, self.requestID == request else { return }
+                if let measured = measured, measured.isFinite, measured > 0 { self.updateDuration(measured) }
+                let item = AVPlayerItem(asset: asset)
+                self.observeItem(item, request: request)
+                self.player.replaceCurrentItem(with: item)
+                self.haptics.attach(to: item)
+                self.scanSilences(in: asset, request: request)
+                self.player.seek(to: CMTime(seconds: self.pendingPosition, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+                    Task { @MainActor in
+                        guard let self = self, self.requestID == request, self.resolving else { return }
+                        self.resolving = false; self.loading = false
+                        if self.pendingAutoplay { self.player.play() } else { self.player.pause() }
+                    }
+                }
+            } catch {
+                guard !Task.isCancelled, self.requestID == request else { return }
+                self.handleFailure(error.localizedDescription)
+            }
+        }
+    }
+
+    private func loadLyrics(_ song: Song, request: UUID) {
         lyricsTask = Task { [weak self] in
             guard let self = self else { return }
             do {
@@ -232,55 +286,178 @@ final class PlaybackController: ObservableObject {
                 _ = try? await self.api.lyrics(for: next)
             }
         }
-        loadTask = Task { [weak self] in
-            guard let self = self else { return }
-            do {
-                let url: URL
-                if let file = song.localFile {
-                    let local = try DownloadFile.url(filename: file, directory: self.downloadDirectory)
-                    if FileManager.default.fileExists(atPath: local.path) { url = local }
-                    else if !song.isLocal { url = try await self.api.stream(for: song) }
-                    else {
-                        throw PlayError.message("The imported file is missing. Import the song again.")
-                    }
-                } else {
-                    guard !song.isLocal else { throw PlayError.message("Import this local audio file again before playing it.") }
-                    url = try await self.api.stream(for: song)
+    }
+
+    private func observeItem(_ item: AVPlayerItem, request: UUID) {
+        itemObserver = item.observe(\.status, options: [.new]) { [weak self] item, _ in
+            Task { @MainActor in
+                guard let self = self, self.requestID == request, item === self.player.currentItem else { return }
+                if item.status == .failed {
+                    self.handleFailure(item.error?.localizedDescription ?? "Could not play this audio.")
                 }
-                guard !Task.isCancelled, self.requestID == request else { return }
-                let audio = AVAudioSession.sharedInstance()
-                try audio.setCategory(.playback, mode: .default)
-                try audio.setActive(true)
-                let asset = AVURLAsset(url: url)
-                let measured = try? await asset.load(.duration).seconds
-                guard !Task.isCancelled, self.requestID == request else { return }
-                if let measured = measured, measured.isFinite, measured > 0 { self.updateDuration(measured) }
-                let item = AVPlayerItem(asset: asset)
-                self.itemObserver = item.observe(\.status, options: [.new]) { [weak self] item, _ in
-                    Task { @MainActor in
-                        guard let self = self, self.requestID == request else { return }
-                        if item.status == .failed {
-                            self.handleFailure(item.error?.localizedDescription ?? "Could not play this audio.")
-                        }
-                    }
-                }
-                self.player.replaceCurrentItem(with: item)
-                self.haptics.attach(to: item)
-                self.player.seek(to: CMTime(seconds: self.pendingPosition, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
-                    Task { @MainActor in
-                        guard let self = self, self.requestID == request, self.resolving else { return }
-                        self.resolving = false; self.loading = false
-                        if self.pendingAutoplay { self.player.play() } else { self.player.pause() }
-                    }
-                }
-            } catch {
-                guard !Task.isCancelled, self.requestID == request else { return }
-                self.handleFailure(error.localizedDescription)
             }
         }
     }
 
+    private func asset(for song: Song) async throws -> AVURLAsset {
+        if let file = song.localFile {
+            let local = try DownloadFile.url(filename: file, directory: downloadDirectory)
+            if FileManager.default.fileExists(atPath: local.path) { return AVURLAsset(url: local) }
+        }
+        guard !song.isLocal else { throw PlayError.message("The imported file is missing. Import the song again.") }
+        return AVURLAsset(url: try await api.stream(for: song))
+    }
+
+    func cancelCrossfade() {
+        fadeTask?.cancel()
+        fadeTask = nil
+        fadePlayer?.pause()
+        fadePlayer = nil
+        fadeSong = nil
+        fadeLength = nil
+        fadeAttempted = false
+        player.volume = 1
+    }
+
+    private func upcomingSong() -> Song? {
+        guard let id = current?.id else { return nil }
+        if shuffleEnabled { return queue.filter { $0.id != id }.randomElement() }
+        guard let index = queue.firstIndex(where: { $0.id == id }) else { return nil }
+        if queue.indices.contains(index + 1) { return queue[index + 1] }
+        return repeatMode == .all ? queue.first : nil
+    }
+
+    private func updateCrossfade(at seconds: Double) {
+        let setting = UserDefaults.standard.double(forKey: "player.crossfade")
+        guard setting.isFinite, setting > 0, !sharedSessionActive, !stopAtTrackEnd,
+              repeatMode != .one, pendingAutoplay, duration > 0 else {
+            if fadeAttempted { cancelCrossfade() }
+            return
+        }
+        let length = min(12, setting, duration / 2)
+        let remaining = duration - seconds
+        guard remaining > 0 else { return }
+        if !fadeAttempted, remaining <= length + 8, let next = upcomingSong(), next.id != current?.id {
+            fadeAttempted = true
+            fadeSong = next
+            let request = requestID
+            fadeTask = Task { [weak self] in
+                guard let self = self, let asset = try? await self.asset(for: next),
+                      !Task.isCancelled, self.requestID == request, self.fadeSong?.id == next.id else { return }
+                let preview = AVPlayer(playerItem: AVPlayerItem(asset: asset))
+                preview.volume = 0
+                self.fadePlayer = preview
+            }
+        }
+        guard let preview = fadePlayer, let item = preview.currentItem else { return }
+        if item.status == .failed || (fadeLength != nil && preview.timeControlStatus == .paused) {
+            cancelCrossfade()
+            fadeAttempted = true
+            return
+        }
+        guard item.status == .readyToPlay, remaining <= length else { return }
+        if fadeLength == nil {
+            let previewDuration = item.duration.seconds
+            let maximum = previewDuration.isFinite && previewDuration > 0 ? previewDuration / 2 : length
+            guard remaining <= maximum else { return }
+            if preview.timeControlStatus == .paused { preview.play() }
+            if preview.timeControlStatus == .playing { fadeLength = remaining }
+        }
+        guard let fadeLength = fadeLength else { return }
+        let audible = preview.currentTime().seconds
+        guard preview.timeControlStatus == .playing, audible.isFinite else {
+            player.volume = 1
+            preview.volume = 0
+            return
+        }
+        let gains = CrossfadeCurve.gains(progress: min(1 - remaining / fadeLength, audible / fadeLength))
+        player.volume = gains.outgoing
+        preview.volume = gains.incoming
+    }
+
+    private func promoteCrossfade() -> Bool {
+        guard !sharedSessionActive, !stopAtTrackEnd, repeatMode != .one,
+              UserDefaults.standard.double(forKey: "player.crossfade") > 0,
+              let next = fadeSong, let incoming = fadePlayer, let item = incoming.currentItem,
+              item.status == .readyToPlay else { return false }
+        let old = player
+        if let token = timeObserver { old.removeTimeObserver(token) }
+        timeObserver = nil
+        statusObserver = nil
+        itemObserver = nil
+        old.pause()
+        old.replaceCurrentItem(with: nil)
+        fadePlayer = nil
+        cancelCrossfade()
+        clearSilences()
+        lyricsTask?.cancel()
+        if let song = current {
+            playedHistory.append(song)
+            if playedHistory.count > 100 { playedHistory.removeFirst() }
+        }
+        requestID = UUID()
+        player = incoming
+        player.volume = 1
+        current = next
+        let elapsed = incoming.currentTime().seconds
+        position = elapsed.isFinite ? max(0, elapsed) : 0
+        lastPosition = position
+        pendingPosition = position
+        duration = next.duration ?? 0
+        isPlaying = incoming.timeControlStatus == .playing
+        loading = !isPlaying
+        error = nil
+        lyrics = []
+        lyricsLoading = true
+        let request = requestID
+        observePlayer()
+        observeItem(item, request: request)
+        let actual = item.duration.seconds
+        if actual.isFinite && actual > 0 { updateDuration(actual) }
+        haptics.attach(to: item)
+        haptics.setPlayback(playing: isPlaying)
+        if let asset = item.asset as? AVURLAsset { scanSilences(in: asset, request: request) }
+        loadLyrics(next, request: request)
+        if isPlaying, let song = current {
+            loggedRequest = request
+            onTrackStarted?(song)
+        } else { player.play() }
+        updateNowPlaying()
+        persistQueue()
+        return true
+    }
+
+    private func clearSilences() {
+        silenceTask?.cancel()
+        silenceTask = nil
+        silences = []
+        silenceIndex = 0
+    }
+
+    private func scanSilences(in asset: AVURLAsset, request: UUID) {
+        guard asset.url.isFileURL, UserDefaults.standard.bool(forKey: "player.skipOfflineSilence") else { return }
+        silenceTask = Task { [weak self] in
+            let result = await OfflineSilence.scan(url: asset.url)
+            guard let self = self, self.requestID == request, !Task.isCancelled else { return }
+            self.silences = result
+        }
+    }
+
+    private func skipVerifiedSilence(at seconds: Double) {
+        guard !sharedSessionActive, !silences.isEmpty, UserDefaults.standard.bool(forKey: "player.skipOfflineSilence") else { return }
+        while silences.indices.contains(silenceIndex), silences[silenceIndex].end <= seconds + 0.18 { silenceIndex += 1 }
+        guard silences.indices.contains(silenceIndex), silences[silenceIndex].start <= seconds else { return }
+        let end = silences[silenceIndex].end
+        silenceIndex += 1
+        player.seek(to: CMTime(seconds: end, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        position = end
+        pendingPosition = end
+        lastPosition = end
+        updateNowPlaying()
+    }
+
     private func handleFailure(_ message: String) {
+        cancelCrossfade()
         loading = false
         resolving = false
         guard let current = current else { error = message; return }
@@ -320,6 +497,7 @@ final class PlaybackController: ObservableObject {
     }
     func pause() {
         if interceptControl?("pause", nil) == true { return }
+        cancelCrossfade()
         mutedPause = false; pendingAutoplay = false; player.pause()
     }
     func resume() {
@@ -332,6 +510,7 @@ final class PlaybackController: ObservableObject {
     }
     // Device events must always pause this device, even when the host owns controls.
     func suspendForSystemEvent() {
+        cancelCrossfade()
         isLocallySuspended = true
         pendingAutoplay = false
         mutedPause = false
@@ -341,6 +520,8 @@ final class PlaybackController: ObservableObject {
     func seek(_ seconds: Double) {
         guard seconds.isFinite else { return }
         if interceptControl?("seek_to", seconds) == true { return }
+        cancelCrossfade()
+        silenceIndex = 0
         position = max(0, min(seconds, duration > 0 ? duration : seconds))
         pendingPosition = position
         if resolving || deferredItem { return }
@@ -360,10 +541,7 @@ final class PlaybackController: ObservableObject {
     }
     func next() {
         if interceptControl?("skip_next", nil) == true { return }
-        if shuffleEnabled, let random = queue.filter({ $0.id != current?.id }).randomElement() { play(random, queue: queue); return }
-        if let id = current?.id, queue.last?.id == id, repeatMode == .all, let first = queue.first { play(first, queue: queue); return }
-        guard let id = current?.id, let index = queue.firstIndex(where: { $0.id == id }), queue.indices.contains(index + 1) else { pause(); return }
-        play(queue[index + 1], queue: queue)
+        if let song = upcomingSong() { play(song, queue: queue) } else { pause() }
     }
     func previous() {
         if interceptControl?("skip_previous", nil) == true { return }
@@ -376,6 +554,7 @@ final class PlaybackController: ObservableObject {
     func enqueue(_ song: Song, next: Bool) {
         if interceptEnqueue?(song, next) == true { return }
         guard !queue.contains(where: { $0.id == song.id }) else { return }
+        cancelCrossfade()
         if current == nil { play(song, queue: [song]); return }
         if next, let index = queue.firstIndex(where: { $0.id == current?.id }) { queue.insert(song, at: index + 1) }
         else { queue.append(song) }
@@ -384,11 +563,13 @@ final class PlaybackController: ObservableObject {
 
     func setRepeat(_ mode: PlayRepeatMode) {
         if interceptControl?("set_repeat_mode", Double(mode.rawValue)) == true { return }
+        cancelCrossfade()
         repeatMode = mode
         persistQueue()
     }
     func setShuffle(_ enabled: Bool) {
         if interceptControl?("set_shuffle_enabled", enabled ? 1 : 0) == true { return }
+        cancelCrossfade()
         shuffleEnabled = enabled
         if UserDefaults.standard.bool(forKey: "player.keepShuffle") { UserDefaults.standard.set(enabled, forKey: "player.savedShuffle") }
         persistQueue()
@@ -398,12 +579,14 @@ final class PlaybackController: ObservableObject {
     }
     func removeQueue(at offsets: IndexSet) {
         guard interceptControl?("edit_queue", nil) != true else { return }
+        cancelCrossfade()
         let active = current?.id
         queue = queue.enumerated().filter { !offsets.contains($0.offset) || $0.element.id == active }.map(\.element)
         persistQueue()
     }
     func moveQueue(from: IndexSet, to: Int) {
         guard interceptControl?("edit_queue", nil) != true else { return }
+        cancelCrossfade()
         var updated = queue
         let valid = from.filter { updated.indices.contains($0) }
         let selected = valid.sorted().map { updated[$0] }
@@ -423,7 +606,11 @@ final class PlaybackController: ObservableObject {
             self?.sleepDeadline = nil; self?.suspendForSystemEvent()
         }
     }
-    func sleepAfterCurrentSong() { setSleepTimer(minutes: nil); stopAtTrackEnd = true }
+    func sleepAfterCurrentSong() {
+        cancelCrossfade()
+        setSleepTimer(minutes: nil)
+        stopAtTrackEnd = true
+    }
 
     // Apply an authoritative room update without sending it back as a guest control.
     func synchronize(queue: [Song], position: Double, playing: Bool) {

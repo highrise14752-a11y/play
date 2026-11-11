@@ -288,6 +288,8 @@ struct PlayerSettingsView: View {
     @AppStorage("player.bluetoothStart") private var bluetoothStart = false
     @AppStorage("player.progressiveSeek") private var progressiveSeek = false
     @AppStorage("player.historyMinimum") private var historyMinimum = 30.0
+    @AppStorage("player.crossfade") private var crossfade = 0.0
+    @AppStorage("player.skipOfflineSilence") private var skipOfflineSilence = false
     var body: some View {
         Form {
             Section("Music haptics") {
@@ -311,6 +313,15 @@ struct PlayerSettingsView: View {
                     Text("Minimum listening time for history: \(Int(historyMinimum)) sec")
                     Slider(value: $historyMinimum, in: 0...120, step: 5)
                 }
+            }
+            Section("Audio transitions") {
+                VStack(alignment: .leading) {
+                    Text(crossfade == 0 ? "Crossfade off" : "Crossfade: \(Int(crossfade)) sec")
+                    Slider(value: $crossfade, in: 0...12, step: 1) { Text("Crossfade duration") }
+                }.onChange(of: crossfade) { _ in player.cancelCrossfade() }
+                Toggle("Skip silence in saved audio", isOn: $skipOfflineSilence)
+                Text("Silence detection starts when you play a downloaded or imported song.")
+                    .font(.caption).foregroundColor(.secondary)
             }
             Section("Queue") {
                 Toggle("Restore queue and position", isOn: $persistentQueue)

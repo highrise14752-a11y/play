@@ -5,6 +5,81 @@ import UIKit
 @testable import Play
 
 final class PlayTests: XCTestCase {
+    private func wave(_ segments: [(seconds: Double, amplitude: Int16)]) -> Data {
+        let sampleRate = 8000
+        let count = segments.reduce(0) { $0 + Int($1.seconds * Double(sampleRate)) } * 2
+        var data = Data()
+        func text(_ value: String) { data.append(contentsOf: value.utf8) }
+        func number<T: FixedWidthInteger>(_ value: T) {
+            var little = value.littleEndian
+            withUnsafeBytes(of: &little) { data.append(contentsOf: $0) }
+        }
+        text("RIFF"); number(UInt32(36 + count)); text("WAVEfmt "); number(UInt32(16)); number(UInt16(1)); number(UInt16(1))
+        number(UInt32(sampleRate)); number(UInt32(sampleRate * 2)); number(UInt16(2)); number(UInt16(16))
+        text("data"); number(UInt32(count))
+        for segment in segments {
+            for frame in 0..<Int(segment.seconds * Double(sampleRate)) {
+                number(frame % 8 < 4 ? segment.amplitude : -segment.amplitude)
+            }
+        }
+        return data
+    }
+
+    func testSilenceScanKeepsQuietMusicAndSkipsOnlyLongSilentSpans() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try wave([(0.5, 2000), (0.3, 0), (0.5, 600), (2, 0), (0.5, 2000)]).write(to: url)
+        let spans = await OfflineSilence.scan(url: url)
+        let span = try XCTUnwrap(spans.first)
+        XCTAssertEqual(spans.count, 1)
+        XCTAssertEqual(span.start, 1.42, accuracy: 0.18)
+        XCTAssertEqual(span.end, 3.14, accuracy: 0.18)
+    }
+
+    func testCrossfadeUsesAnEqualPowerCurveAndClampsProgress() {
+        let start = CrossfadeCurve.gains(progress: -1)
+        let middle = CrossfadeCurve.gains(progress: 0.5)
+        let end = CrossfadeCurve.gains(progress: 2)
+        XCTAssertEqual(start.outgoing, 1, accuracy: 0.001)
+        XCTAssertEqual(start.incoming, 0, accuracy: 0.001)
+        XCTAssertEqual(middle.incoming, middle.outgoing, accuracy: 0.001)
+        XCTAssertEqual(middle.incoming * middle.incoming + middle.outgoing * middle.outgoing, 1, accuracy: 0.001)
+        XCTAssertEqual(end.incoming, 1, accuracy: 0.001)
+        XCTAssertEqual(end.outgoing, 0, accuracy: 0.001)
+    }
+
+    @MainActor func testCrossfadePromotesTheAlreadyPlayingNextTrack() async throws {
+        let defaults = UserDefaults.standard
+        let keys = ["player.crossfade", "player.skipOfflineSilence"] + LyricSource.allCases.map(\.setting)
+        let originals = keys.map { defaults.object(forKey: $0) }
+        defer { for (key, value) in zip(keys, originals) { defaults.set(value, forKey: key) } }
+        defaults.set(1.5, forKey: keys[0])
+        for key in keys.dropFirst() { defaults.set(false, forKey: key) }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let audio = wave([(3, 2000)])
+        try audio.write(to: folder.appendingPathComponent("one.wav"))
+        try audio.write(to: folder.appendingPathComponent("two.wav"))
+        let first = Song(id: "local:1", title: "One", artist: "Artist", localFile: "one.wav")
+        let next = Song(id: "local:2", title: "Two", artist: "Artist", localFile: "two.wav")
+        let player = PlaybackController(api: MusicAPI(), downloadDirectory: folder)
+        defer { player.pause() }
+        var secondPosition: Double?
+        player.onTrackStarted = { [weak player] song in
+            if song.id == next.id { secondPosition = player?.position }
+        }
+        player.play(first, queue: [first, next])
+        for _ in 0..<150 {
+            if secondPosition != nil || player.error != nil { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertNil(player.error)
+        XCTAssertEqual(player.current?.id, next.id)
+        XCTAssertGreaterThan(try XCTUnwrap(secondPosition), 0.25)
+        XCTAssertEqual(player.duration, 3, accuracy: 0.01)
+    }
+
     func testAudioNormalizationAttenuatesLoudSamplesAndDoesNotAmplifySilence() {
         var gain = AdaptiveGain()
         XCTAssertEqual(gain.update(rms: 0, frames: 48000, sampleRate: 48000), 1)

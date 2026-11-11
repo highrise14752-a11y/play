@@ -181,7 +181,8 @@ Android source: `app/src/main/kotlin/com/nikhil/yt/ui/screens/settings/PlayerSet
 - Playback client (`player_stream_client`): Pending / compare iOS-specific behavior
 - Treat network as metered (`network_metered_title`): Present in iOS
 - History duration (`history_duration`): Present in iOS
-- Skip silence (`skip_silence`): Pending / compare iOS-specific behavior
+- Crossfade: Native player overlap with an adjustable duration. Disabled for shared listening and repeat-one.
+- Skip silence (`skip_silence`): Supported for downloaded and imported audio.
 - Audio normalization (`audio_normalization`): Present in iOS
 - Audio offload (`audio_offload`): Pending / compare iOS-specific behavior
 - Progressive seek (`seek_seconds_addup`): Present in iOS
@@ -297,7 +298,7 @@ Android source: `app/src/main/kotlin/com/nikhil/yt/ui/screens/settings/UpdateScr
 - Online Together room codes and server configuration need a supported authentication flow. Wi-Fi room approval, moderation, and permissions are implemented.
 - Canvas and additional Android layout variants. The Android Canvas service did not resolve in testing. iOS has artwork colors, a custom photo background, and theme import/export.
 - Lyrics translation and some word-timed formats. The iOS app supports four lyric providers and TTML word timing. Provider results depend on availability.
-- Crossfade, silence skipping, playback-client selection, and Android-specific audio routing. Audio normalization, quality, and metered-network controls are available.
+- Silence skipping for live streams, playback-client selection, and Android-specific audio routing. Crossfade and saved-audio silence skipping are implemented.
 - Android offload, USB audio, notification/default-link behavior and Android Auto need platform-specific iOS treatment; some require Apple entitlements.
 - Android backup database files are not interchangeable with the native iOS JSON backup.
 
