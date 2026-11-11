@@ -57,7 +57,10 @@ final class PlayTests: XCTestCase {
         player.setRepeat(.all); player.setShuffle(true)
         XCTAssertEqual(player.repeatMode, .all); XCTAssertTrue(player.shuffleEnabled)
         player.setSleepTimer(minutes: 0.001)
-        try await Task.sleep(nanoseconds: 100_000_000)
+        for _ in 0..<20 {
+            if player.sleepDeadline == nil { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
         XCTAssertNil(player.sleepDeadline); XCTAssertTrue(player.isLocallySuspended)
         player.sleepAfterCurrentSong(); XCTAssertTrue(player.stopAtTrackEnd)
         player.setSleepTimer(minutes: nil); XCTAssertFalse(player.stopAtTrackEnd)

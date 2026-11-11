@@ -16,7 +16,7 @@ enum PlayTheme {
 
 enum TrackTime {
     static func text(_ seconds: Double?, elapsed: Bool = false) -> String {
-        guard let seconds = seconds, seconds.isFinite, seconds >= 0, seconds < 10_000_000 else { return "â€”" }
+        guard let seconds = seconds, seconds.isFinite, seconds >= 0, seconds < 10_000_000 else { return "—" }
         let value = Int(elapsed ? floor(seconds) : seconds.rounded())
         if value >= 3600 { return String(format: "%d:%02d:%02d", value / 3600, value / 60 % 60, value % 60) }
         return String(format: "%d:%02d", value / 60, value % 60)
@@ -152,7 +152,7 @@ struct HomeView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 18) {
                 CategoryChips(choices: moods, selection: Binding(get: { feed.category ?? "All" }, set: { feed.category = $0 == "All" ? nil : $0 }))
-                if feed.loading && feed.songs.isEmpty { ProgressView("Loading suggestionsâ€¦").frame(maxWidth: .infinity).padding(30) }
+                if feed.loading && feed.songs.isEmpty { ProgressView("Loading suggestions…").frame(maxWidth: .infinity).padding(30) }
                 if let error = feed.error {
                     VStack(alignment: .leading, spacing: 12) {
                         Text(error).font(PlayTheme.font(13)).foregroundColor(.secondary)
@@ -263,11 +263,11 @@ struct StatsView: View {
                     statCard("Songs played", value: "\(summary.reduce(0) { $0 + $1.plays })", icon: "music.note")
                 }
                 Text("Top songs").font(PlayTheme.font(22, weight: .semibold))
-                if totals.isEmpty { EmptyMusicState(title: "Make some music memories", message: "Your listening stats appear after you play music.", icon: "chart.bar") }
+                if summary.isEmpty { EmptyMusicState(title: "Make some music memories", message: "Your listening stats appear after you play music.", icon: "chart.bar") }
                 ForEach(Array(summary.prefix(50)), id: \.song.id) { total in
                     VStack(alignment: .leading, spacing: 3) {
                         SongRow(song: total.song, queue: songs)
-                        Text("\(total.plays) plays â€¢ \(TrackTime.text(total.seconds)) listened").font(PlayTheme.font(10)).foregroundColor(.secondary).padding(.leading, 66)
+                        Text("\(total.plays) plays • \(TrackTime.text(total.seconds)) listened").font(PlayTheme.font(10)).foregroundColor(.secondary).padding(.leading, 66)
                     }
                 }
             }.padding(16)
