@@ -38,24 +38,24 @@ Android source: `app/src/main/kotlin/com/nikhil/yt/ui/screens/settings/AccountSe
 Android source: `app/src/main/kotlin/com/nikhil/yt/ui/screens/settings/AppearanceSettings.kt`
 
 - Theme (`theme`): Pending / compare iOS-specific behavior
-- Enable dynamic theme (`enable_dynamic_theme`): Pending / compare iOS-specific behavior
+- Enable dynamic theme (`enable_dynamic_theme`): Present in iOS
 - Random theme on startup (`random_theme_on_startup`): Present in iOS
 - Color Palette (`color_palette`): Pending / compare iOS-specific behavior
 - Dark theme (`dark_theme`): System, Dark, or Light
 - Pure black (`pure_black`): Present in iOS
-- Disable blur effects (`disable_blur`): Pending / compare iOS-specific behavior
+- Disable blur effects (`disable_blur`): Present in iOS
 - Use system font (`use_system_font`): Present in iOS
 - Player (`player`): Pending / compare iOS-specific behavior
 - Player design style (`player_design_style`): Compact player controls
 - New mini player design (`new_mini_player_design`): Compact or standard mini player
 - New library design (`new_library_design`): Pending / compare iOS-specific behavior
-- Player background style (`player_background_style`): Solid, gradient, or blurred artwork
-- Customized background (`customized_background`): Pending / compare iOS-specific behavior
+- Player background style (`player_background_style`): Solid, gradient, blurred artwork, or a photo selected from Files
+- Customized background (`customized_background`): Present in iOS
 - Hide Player Thumbnail (`hide_player_thumbnail`): Present in iOS
 - Play Canvas (`velune_canvas`): Pending / compare iOS-specific behavior
 - Crop thumbnails to 1:1 (`crop_thumbnail_to_square`): Present in iOS
 - Player button colors (`player_buttons_style`): Present in iOS
-- Player slider style (`player_slider_style`): Pending / compare iOS-specific behavior
+- Player slider style (`player_slider_style`): Present in iOS
 - Enable swipe to change song (`enable_swipe_thumbnail`): Present in iOS
 - Mini player swipe sensitivity (`swipe_sensitivity`): Present in iOS
 - Lyrics (`lyrics`): Pending / compare iOS-specific behavior
@@ -69,7 +69,7 @@ Android source: `app/src/main/kotlin/com/nikhil/yt/ui/screens/settings/Appearanc
 - Default open tab (`default_open_tab`): Present in iOS
 - Change default library chip (`default_lib_chips`): Present in iOS
 - Show home category chips (`show_home_category_chips`): Present in iOS
-- Show tags in library (`show_tags_in_library`): Pending / compare iOS-specific behavior
+- Show tags in library (`show_tags_in_library`): Present in iOS
 - Swipe song to the left to add it to the queue or to the right to play it next (`swipe_song_to_add`): Present in iOS
 - Slim bottom navigation bar (`slim_navbar`): Present in iOS
 - Grid cell size (`grid_cell_size`): Pending / compare iOS-specific behavior
@@ -124,7 +124,7 @@ Android source: `app/src/main/kotlin/com/nikhil/yt/ui/screens/settings/ContentSe
 
 Android source: `app/src/main/kotlin/com/nikhil/yt/ui/screens/settings/CustomizeBackground.kt`
 
-- Customize background (`customize_background_title`): Pending / compare iOS-specific behavior
+- Customize background (`customize_background_title`): Present in iOS
 
 ### DebugSettings
 
@@ -182,7 +182,7 @@ Android source: `app/src/main/kotlin/com/nikhil/yt/ui/screens/settings/PlayerSet
 - Treat network as metered (`network_metered_title`): Present in iOS
 - History duration (`history_duration`): Present in iOS
 - Skip silence (`skip_silence`): Pending / compare iOS-specific behavior
-- Audio normalization (`audio_normalization`): Pending / compare iOS-specific behavior
+- Audio normalization (`audio_normalization`): Present in iOS
 - Audio offload (`audio_offload`): Pending / compare iOS-specific behavior
 - Progressive seek (`seek_seconds_addup`): Present in iOS
 - Pause when device volume is 0 (`pause_on_device_mute`): Present in iOS
@@ -195,7 +195,7 @@ Android source: `app/src/main/kotlin/com/nikhil/yt/ui/screens/settings/PlayerSet
 - Misc (`misc`): Pending / compare iOS-specific behavior
 - Stop music on task clear (`stop_music_on_task_clear`): Pending / compare iOS-specific behavior
 - Symbols to split artists (`artist_separators`): Pending / compare iOS-specific behavior
-- Playlist Tags (`manage_playlist_tags`): Pending / compare iOS-specific behavior
+- Playlist Tags (`manage_playlist_tags`): Present in iOS
 - Player and audio (`player_and_audio`): Present in iOS
 
 ### PoTokenExtractionActivity
@@ -260,7 +260,7 @@ Android source: `app/src/main/kotlin/com/nikhil/yt/ui/screens/settings/SettingsS
 - Theme Creator (`theme_creator_title`): Present in iOS
 - Tune colors, preview the result, then export or import. (`theme_creator_subtitle`): Pending / compare iOS-specific behavior
 - Customize colors (`customize_colors`): Present in iOS
-- Customize background (`customize_background_title`): Pending / compare iOS-specific behavior
+- Customize background (`customize_background_title`): Present in iOS
 - Play Music Together (`music_together`): Wi-Fi hosting and joining, permissions, approvals, removal, and session bans
 - Internal & subcategory settings (`internal_subcategory_settings`): Pending / compare iOS-specific behavior
 - No results found (`no_results_found`): Pending / compare iOS-specific behavior
@@ -295,9 +295,9 @@ Android source: `app/src/main/kotlin/com/nikhil/yt/ui/screens/settings/UpdateScr
 
 - Private YouTube account synchronization and upstream Play-account services. Public playlists can be imported from a link.
 - Online Together room codes and server configuration need a supported authentication flow. Wi-Fi room approval, moderation, and permissions are implemented.
-- Artwork-driven palettes, photo backgrounds, Canvas, and additional Android layout variants. Custom accent colors and theme import/export are available.
+- Canvas and additional Android layout variants. The Android Canvas service did not resolve in testing. iOS has artwork colors, a custom photo background, and theme import/export.
 - Lyrics translation and some word-timed formats. The iOS app supports four lyric providers and TTML word timing. Provider results depend on availability.
-- Crossfade, normalization, silence skipping, playback-client selection, and Android-specific audio routing. Audio quality and metered-network controls are available.
+- Crossfade, silence skipping, playback-client selection, and Android-specific audio routing. Audio normalization, quality, and metered-network controls are available.
 - Android offload, USB audio, notification/default-link behavior and Android Auto need platform-specific iOS treatment; some require Apple entitlements.
 - Android backup database files are not interchangeable with the native iOS JSON backup.
 

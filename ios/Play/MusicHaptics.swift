@@ -113,14 +113,37 @@ private final class HapticOutput {
     }
 }
 
+struct AdaptiveGain {
+    private(set) var gain = 1.0
+
+    mutating func update(rms: Double, frames: Int, sampleRate: Double) -> Float {
+        guard rms.isFinite, rms > 0.008, sampleRate > 0, frames > 0 else { return Float(gain) }
+        let target = min(1.6, max(0.3, 0.14 / rms))
+        let seconds = Double(frames) / sampleRate
+        let timeConstant = target < gain ? 0.25 : 2.0
+        gain += (target - gain) * (1 - exp(-seconds / timeConstant))
+        return Float(gain)
+    }
+
+    static func limited(_ sample: Float, gain: Float) -> Float {
+        guard sample.isFinite else { return 0 }
+        return min(0.98, max(-0.98, sample * gain))
+    }
+}
+
 private final class AudioTapContext {
     let output: HapticOutput
     let generation: UUID
     var format = AudioStreamBasicDescription()
     var analyzer: HapticEnergy
+    let haptics: Bool
+    let normalization: Bool
+    private var gain = AdaptiveGain()
     private var lastEmission = 0.0
-    init(output: HapticOutput, generation: UUID, mode: HapticMode) {
+    init(output: HapticOutput, generation: UUID, mode: HapticMode, haptics: Bool, normalization: Bool) {
         self.output = output; self.generation = generation; analyzer = HapticEnergy(mode: mode)
+        self.haptics = haptics
+        self.normalization = normalization
     }
     func process(_ list: UnsafeMutablePointer<AudioBufferList>, frames: Int) {
         guard frames > 0, format.mFormatID == kAudioFormatLinearPCM else { return }
@@ -129,23 +152,52 @@ private final class AudioTapContext {
         let stride = max(1, Int(first.mNumberChannels))
         analyzer.sampleRate = format.mSampleRate
         var energy = 0.0
+        var square = 0.0
+        var frameCount: Int
         if format.mFormatFlags & kAudioFormatFlagIsFloat != 0 && format.mBitsPerChannel == 32 {
             let count = min(frames, Int(first.mDataByteSize) / (MemoryLayout<Float>.size * stride))
             guard count > 0 else { return }
+            frameCount = count
             let samples = data.assumingMemoryBound(to: Float.self)
-            for i in 0..<count { energy += analyzer.sample(samples[i * stride]) }
-            energy = sqrt(energy / Double(count))
+            for i in 0..<count {
+                let sample = samples[i * stride]
+                if haptics { energy += analyzer.sample(sample) }
+                if normalization { square += Double(sample) * Double(sample) }
+            }
+            if normalization {
+                let multiplier = gain.update(rms: sqrt(square / Double(count)), frames: count, sampleRate: format.mSampleRate)
+                for buffer in buffers {
+                    guard let samples = buffer.mData?.assumingMemoryBound(to: Float.self) else { continue }
+                    let length = min(frames * max(1, Int(buffer.mNumberChannels)), Int(buffer.mDataByteSize) / MemoryLayout<Float>.size)
+                    for i in 0..<length { samples[i] = AdaptiveGain.limited(samples[i], gain: multiplier) }
+                }
+            }
         } else if format.mFormatFlags & kAudioFormatFlagIsSignedInteger != 0 && format.mBitsPerChannel == 16 {
             let count = min(frames, Int(first.mDataByteSize) / (MemoryLayout<Int16>.size * stride))
             guard count > 0 else { return }
+            frameCount = count
             let samples = data.assumingMemoryBound(to: Int16.self)
-            for i in 0..<count { energy += analyzer.sample(Float(samples[i * stride]) / 32768) }
-            energy = sqrt(energy / Double(count))
+            for i in 0..<count {
+                let sample = Float(samples[i * stride]) / 32768
+                if haptics { energy += analyzer.sample(sample) }
+                if normalization { square += Double(sample) * Double(sample) }
+            }
+            if normalization {
+                let multiplier = gain.update(rms: sqrt(square / Double(count)), frames: count, sampleRate: format.mSampleRate)
+                for buffer in buffers {
+                    guard let samples = buffer.mData?.assumingMemoryBound(to: Int16.self) else { continue }
+                    let length = min(frames * max(1, Int(buffer.mNumberChannels)), Int(buffer.mDataByteSize) / MemoryLayout<Int16>.size)
+                    for i in 0..<length {
+                        samples[i] = Int16(AdaptiveGain.limited(Float(samples[i]) / 32768, gain: multiplier) * 32768)
+                    }
+                }
+            }
         } else { return }
+        guard haptics else { return }
         let now = ProcessInfo.processInfo.systemUptime
         if now - lastEmission >= 0.1 {
             lastEmission = now
-            output.emit(energy, generation: generation)
+            output.emit(sqrt(energy / Double(frameCount)), generation: generation)
         }
     }
 }
@@ -160,6 +212,9 @@ final class MusicHaptics: ObservableObject {
     @Published var mode: String { didSet { UserDefaults.standard.set(mode, forKey: "haptics.mode"); refresh() } }
     @Published var pauseInLowPower: Bool {
         didSet { UserDefaults.standard.set(pauseInLowPower, forKey: "haptics.pauseInLowPower"); updateOutput() }
+    }
+    @Published var normalizeAudio: Bool {
+        didSet { UserDefaults.standard.set(normalizeAudio, forKey: "player.normalize"); refresh() }
     }
     @Published private(set) var status = "Off"
     private let output: HapticOutput
@@ -180,6 +235,7 @@ final class MusicHaptics: ObservableObject {
         intensity = UserDefaults.standard.object(forKey: "haptics.intensity") as? Double ?? 0.5
         mode = UserDefaults.standard.string(forKey: "haptics.mode") ?? HapticMode.whole.rawValue
         pauseInLowPower = UserDefaults.standard.object(forKey: "haptics.pauseInLowPower") as? Bool ?? true
+        normalizeAudio = UserDefaults.standard.bool(forKey: "player.normalize")
         powerObserver = NotificationCenter.default.addObserver(forName: .NSProcessInfoPowerStateDidChange, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.updateOutput() }
         }
@@ -207,8 +263,9 @@ final class MusicHaptics: ObservableObject {
         attachTask?.cancel()
         generation = UUID()
         updateOutput()
-        guard supported else { status = "Music haptics aren’t supported on this device."; return }
-        guard enabled else { item?.audioMix = nil; status = "Off"; return }
+        let hapticsActive = supported && enabled
+        let normalize = normalizeAudio
+        guard hapticsActive || normalize else { item?.audioMix = nil; status = "Off"; return }
         guard let item = item else { status = "Ready — play a song"; return }
         let currentGeneration = generation
         status = "Preparing audio analysis…"
@@ -217,7 +274,8 @@ final class MusicHaptics: ObservableObject {
             do {
                 let tracks = try await item.asset.loadTracks(withMediaType: .audio)
                 guard !Task.isCancelled, generation == currentGeneration, let track = tracks.first else { return }
-                let context = AudioTapContext(output: output, generation: currentGeneration, mode: HapticMode(rawValue: mode) ?? .whole)
+                let context = AudioTapContext(output: output, generation: currentGeneration, mode: HapticMode(rawValue: mode) ?? .whole,
+                                              haptics: hapticsActive, normalization: normalize)
                 let reference = Unmanaged.passRetained(context)
                 var callbacks = MTAudioProcessingTapCallbacks(version: kMTAudioProcessingTapCallbacksVersion_0,
                     clientInfo: reference.toOpaque(),
@@ -241,7 +299,7 @@ final class MusicHaptics: ObservableObject {
                 let mix = AVMutableAudioMix()
                 mix.inputParameters = [parameters]
                 item.audioMix = mix
-                status = "\(backendName) • active while Play is onscreen"
+                status = hapticsActive ? "\(backendName) • active while Play is onscreen" : "Off"
             } catch { if !Task.isCancelled { status = "Audio analysis unavailable: \(error.localizedDescription)" } }
         }
     }

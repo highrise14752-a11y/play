@@ -18,7 +18,12 @@ enum PlayTheme {
     })
     static let outline = Color.primary.opacity(0.17)
     static var accent: Color {
-        color(UserDefaults.standard.object(forKey: "appearance.accent") as? Int ?? 0xFFB3BB)
+        let defaults = UserDefaults.standard
+        if defaults.bool(forKey: "appearance.dynamicAccent"),
+           let artwork = defaults.object(forKey: "appearance.artworkAccent") as? Int, artwork >= 0 {
+            return color(artwork)
+        }
+        return color(defaults.object(forKey: "appearance.accent") as? Int ?? 0xFFB3BB)
     }
     static func color(_ hex: Int) -> Color { Color(red: Double(hex >> 16 & 255) / 255, green: Double(hex >> 8 & 255) / 255, blue: Double(hex & 255) / 255) }
     static func font(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
@@ -54,10 +59,13 @@ struct RootView: View {
     @State private var searching = false
     @State private var searchLink = ""
     @AppStorage("appearance.accent") private var accent = 0xFFB3BB
+    @AppStorage("appearance.artworkAccent") private var artworkAccent = -1
+    @AppStorage("appearance.dynamicAccent") private var dynamicAccent = false
     @AppStorage("appearance.pureBlack") private var pureBlack = true
     @AppStorage("appearance.slimNav") private var slimNav = false
     private let labels = ["Home", "Stats", "History", "Library"]
     private let icons = ["safari.fill", "chart.line.uptrend.xyaxis", "clock.fill", "square.grid.2x2.fill"]
+    private var activeAccent: Color { PlayTheme.color(dynamicAccent && artworkAccent >= 0 ? artworkAccent : accent) }
 
     var body: some View {
         NavigationView {
@@ -90,9 +98,9 @@ struct RootView: View {
                                 VStack(spacing: 5) {
                                     Image(systemName: icons[index]).font(.system(size: 21, weight: .medium))
                                         .frame(width: 50, height: slimNav ? 26 : 31)
-                                        .background(Capsule().fill(index == tab ? PlayTheme.color(accent).opacity(0.3) : .clear))
+                                        .background(Capsule().fill(index == tab ? activeAccent.opacity(0.3) : .clear))
                                     if !slimNav { Text(labels[index]).font(PlayTheme.font(11)) }
-                                }.foregroundColor(index == tab ? PlayTheme.color(accent) : .secondary)
+                                }.foregroundColor(index == tab ? activeAccent : .secondary)
                                     .frame(maxWidth: .infinity, minHeight: 44).padding(.vertical, slimNav ? 0 : 10)
                             }.accessibilityIdentifier("tab.\(labels[index].lowercased())")
                                 .accessibilityLabel(labels[index])
@@ -101,7 +109,8 @@ struct RootView: View {
                         .overlay(RoundedRectangle(cornerRadius: 27).stroke(PlayTheme.outline, lineWidth: 1))
                 }.padding(.horizontal, 12).padding(.top, 6).padding(.bottom, 5).background(PlayTheme.background)
             }
-        }.navigationViewStyle(.stack).tint(PlayTheme.color(accent))
+        }.navigationViewStyle(.stack).tint(activeAccent)
+        .background { ArtworkPaletteWatcher() }
         .sheet(isPresented: $showingPlayer) { NavigationView { PlayerView() }.navigationViewStyle(.stack) }
         .sheet(isPresented: $searching) { NavigationView { SearchView(initialQuery: searchLink).id(searchLink) }.navigationViewStyle(.stack) }
         .onChange(of: scenePhase) {

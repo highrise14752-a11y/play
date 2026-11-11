@@ -5,6 +5,16 @@ import UIKit
 @testable import Play
 
 final class PlayTests: XCTestCase {
+    func testAudioNormalizationAttenuatesLoudSamplesAndDoesNotAmplifySilence() {
+        var gain = AdaptiveGain()
+        XCTAssertEqual(gain.update(rms: 0, frames: 48000, sampleRate: 48000), 1)
+        let lowered = gain.update(rms: 0.5, frames: 48000, sampleRate: 48000)
+        XCTAssertLessThan(lowered, 0.4)
+        XCTAssertGreaterThan(lowered, 0.29)
+        XCTAssertEqual(gain.update(rms: 0, frames: 48000, sampleRate: 48000), lowered)
+        XCTAssertEqual(AdaptiveGain.limited(0.8, gain: 1.6), 0.98, accuracy: 0.001)
+        XCTAssertEqual(AdaptiveGain.limited(-0.8, gain: 1.6), -0.98, accuracy: 0.001)
+    }
     func testTTMLKeepsWordTimesAndSkipsAlternativeText() {
         let text = #"<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata"><body><div><p begin="00:02.500"><span begin="2.5s">First</span> <span begin="3200ms">line</span><span ttm:role="x-translation">ignore</span></p><p begin="00:04.000">Next line</p></div></body></tt>"#
         let lines = TTMLLyrics.parse(text)
@@ -161,6 +171,7 @@ final class PlayTests: XCTestCase {
         let song = Song(id: "khnokW3Mw24", title: "Song", artist: "Artist")
         collections.createPlaylist("Favorites")
         let id = try XCTUnwrap(collections.state.playlists.first?.id)
+        collections.setTags("Study, study, Favorite", for: id)
         collections.add(song, to: id); collections.add(song, to: id)
         XCTAssertEqual(collections.state.playlists[0].songIDs, [song.id])
         collections.toggleLike(song); XCTAssertTrue(collections.liked(song))
@@ -168,6 +179,7 @@ final class PlayTests: XCTestCase {
         XCTAssertEqual(collections.state.totals[song.id]?.plays, 1)
         XCTAssertEqual(collections.state.totals[song.id]?.seconds, 0.5)
         let restored = UserCollections(directory: root)
+        XCTAssertEqual(restored.state.playlists.first?.tags, ["Study", "Favorite"])
         XCTAssertTrue(restored.liked(song)); XCTAssertEqual(restored.state.history.count, 1)
         restored.restore(collections.state)
         XCTAssertEqual(restored.state.playlists.count, 1); XCTAssertEqual(restored.state.history.count, 1)

@@ -216,12 +216,18 @@ struct LibraryView: View {
     @AppStorage("appearance.showLiked") private var showLiked = true
     @AppStorage("appearance.showDownloaded") private var showDownloaded = true
     @AppStorage("appearance.showTop") private var showTop = true
+    @AppStorage("appearance.libraryTags") private var showTags = true
     @AppStorage("content.topCount") private var topCount = 50
     @State private var query = ""
     @State private var sort = "Date added"
     @State private var descending = false
     @State private var creating = false
     @State private var renaming: LocalPlaylist?
+    @State private var tagging: LocalPlaylist?
+    @State private var tagFilter: String?
+    private var tags: [String] {
+        Array(Set(collections.state.playlists.flatMap { $0.tags ?? [] })).sorted()
+    }
     private var displayed: [Song] {
         let songs = library.songs.filter { query.isEmpty || $0.title.localizedCaseInsensitiveContains(query) || $0.artist.localizedCaseInsensitiveContains(query) || ($0.album?.localizedCaseInsensitiveContains(query) == true) }
         let ordered: [Song]
@@ -247,6 +253,11 @@ struct LibraryView: View {
                 Button { importing = true } label: { Image(systemName: "square.and.arrow.down").frame(width: 32, height: 35) }.accessibilityLabel("Import audio")
                 Button { creating = true } label: { Image(systemName: "plus").frame(width: 32, height: 35) }.accessibilityLabel("New playlist")
             }.foregroundColor(PlayTheme.accent).padding(.horizontal, 20)
+            if section == "Playlists", showTags, !tags.isEmpty {
+                CategoryChips(choices: ["All tags"] + tags, selection: Binding(get: { tagFilter ?? "All tags" }, set: {
+                    tagFilter = $0 == "All tags" ? nil : $0
+                }))
+            }
             if section == "Songs" {
                 TextField("Search your library", text: $query).padding(12).background(RoundedRectangle(cornerRadius: 18).fill(PlayTheme.surface)).padding(.horizontal, 16)
             }
@@ -256,10 +267,17 @@ struct LibraryView: View {
                         if showLiked { NavigationLink { AutoCollectionView(kind: "Liked") } label: { collectionRow("Liked", icon: "heart") } }
                         if showDownloaded { NavigationLink { AutoCollectionView(kind: "Downloaded") } label: { collectionRow("Downloaded", icon: "arrow.down.circle") } }
                         if showTop { NavigationLink { AutoCollectionView(kind: "Top") } label: { collectionRow("My top \(topCount)", icon: "chart.line.uptrend.xyaxis") } }
-                        ForEach(collections.state.playlists) { playlist in
-                            NavigationLink { PlaylistDetailView(id: playlist.id) } label: { collectionRow(playlist.name, icon: "music.note.list", subtitle: "\(playlist.songIDs.count) songs") }
+                        ForEach(collections.state.playlists.filter { playlist in
+                            !showTags || tagFilter == nil || (playlist.tags ?? []).contains(tagFilter ?? "")
+                        }) { playlist in
+                            NavigationLink { PlaylistDetailView(id: playlist.id) } label: {
+                                let tags = showTags ? (playlist.tags ?? []) : []
+                                let subtitle = (["\(playlist.songIDs.count) songs"] + tags).joined(separator: " • ")
+                                collectionRow(playlist.name, icon: "music.note.list", subtitle: subtitle)
+                            }
                                 .contextMenu {
                                     Button("Rename") { renaming = playlist }
+                                    Button("Edit tags") { tagging = playlist }
                                     Button("Delete playlist", role: .destructive) { collections.deletePlaylist(playlist.id) }
                                 }
                         }
@@ -282,6 +300,8 @@ struct LibraryView: View {
         }
         .sheet(isPresented: $creating) { NameEntryView(title: "New playlist", submit: collections.createPlaylist) }
         .sheet(item: $renaming) { playlist in NameEntryView(title: "Rename playlist", submit: { collections.renamePlaylist(playlist.id, name: $0) }, name: playlist.name) }
+        .sheet(item: $tagging) { playlist in PlaylistTagsView(playlist: playlist) }
+        .onChange(of: tags) { if let filter = tagFilter, !$0.contains(filter) { tagFilter = nil } }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.audio], allowsMultipleSelection: true) { result in
             switch result {
             case .success(let urls): Task { await library.importFiles(urls) }
@@ -298,6 +318,32 @@ struct LibraryView: View {
             }
             Spacer()
         }.padding(.vertical, 4)
+    }
+}
+
+private struct PlaylistTagsView: View {
+    let playlist: LocalPlaylist
+    @EnvironmentObject private var collections: UserCollections
+    @Environment(\.dismiss) private var dismiss
+    @State private var text: String
+
+    init(playlist: LocalPlaylist) {
+        self.playlist = playlist
+        _text = State(initialValue: (playlist.tags ?? []).joined(separator: ", "))
+    }
+
+    var body: some View {
+        NavigationView {
+            Form {
+                TextField("Tags separated by commas", text: $text)
+            }.navigationTitle("Playlist tags").navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Save") { collections.setTags(text, for: playlist.id); dismiss() }
+                    }
+                }
+        }.navigationViewStyle(.stack)
     }
 }
 
@@ -329,6 +375,9 @@ struct PlayerView: View {
     @AppStorage("appearance.swipeDistance") private var swipeDistance = 52.0
     @AppStorage("appearance.accentButtons") private var accentButtons = false
     @AppStorage("appearance.playerCompact") private var compactControls = false
+    @AppStorage("appearance.photoVersion") private var photoVersion = 0
+    @AppStorage("appearance.disableBlur") private var disableBlur = false
+    @State private var backgroundPhoto: UIImage?
 
     var body: some View {
         VStack(spacing: 16) {
@@ -357,10 +406,7 @@ struct PlayerView: View {
                         }.accessibilityLabel("Like song")
                     }
                     if let error = player.error { Text(error).font(.caption).foregroundColor(.orange) }
-                    Slider(value: Binding(get: { scrub ?? player.position }, set: { scrub = $0 }), in: 0...max(1, player.duration)) { editing in
-                        if !editing, let value = scrub { player.seek(value); scrub = nil }
-                    }
-                    .disabled(player.duration <= 0)
+                    PlaybackScrubber(preview: $scrub, position: player.position, duration: player.duration, seek: player.seek)
                     HStack {
                         Text(TrackTime.text(scrub ?? player.position, elapsed: true))
                         Spacer()
@@ -406,17 +452,30 @@ struct PlayerView: View {
         .sheet(isPresented: $timerVisible) { NavigationView { SleepTimerView().toolbar { ToolbarItem(placement: .navigationBarLeading) { Button("Done") { timerVisible = false } } } }.navigationViewStyle(.stack) }
         .sheet(isPresented: $shareVisible) { ShareView(items: shareItems) }
         .onChange(of: player.current?.id) { _ in scrub = nil }
+        .task(id: photoVersion) {
+            if backgroundStyle == "Photo" { backgroundPhoto = UIImage(contentsOfFile: PlayerPhoto.file.path) }
+        }
     }
 
     @ViewBuilder private var playerBackground: some View {
         switch backgroundStyle {
         case "Solid": PlayTheme.background
+        case "Photo":
+            ZStack {
+                PlayTheme.background
+                if let photo = backgroundPhoto {
+                    GeometryReader { geometry in
+                        Image(uiImage: photo).resizable().scaledToFill()
+                            .frame(width: geometry.size.width, height: geometry.size.height).clipped().opacity(0.26)
+                    }
+                }
+            }
         case "Blurred artwork":
             ZStack {
                 PlayTheme.background
                 GeometryReader { size in
                     Artwork(url: player.current?.artwork).frame(width: size.size.width, height: size.size.height)
-                        .blur(radius: 28).opacity(0.26)
+                        .blur(radius: disableBlur ? 0 : 28).opacity(0.26)
                 }
             }.clipped()
         default:

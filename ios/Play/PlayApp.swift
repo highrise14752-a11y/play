@@ -26,6 +26,7 @@ struct PlayApp: App {
             return
         }
         #endif
+        UserDefaults.standard.removeObject(forKey: "appearance.artworkAccent")
         if UserDefaults.standard.bool(forKey: "appearance.randomAccent"), let color = PlayTheme.palette.randomElement() {
             UserDefaults.standard.set(color, forKey: "appearance.accent")
         }

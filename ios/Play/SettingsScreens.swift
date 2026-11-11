@@ -81,6 +81,7 @@ struct AppearanceSettingsView: View {
     @AppStorage("appearance.mode") private var mode = "Dark"
     @AppStorage("appearance.systemFont") private var systemFont = false
     @AppStorage("appearance.randomAccent") private var randomAccent = false
+    @AppStorage("appearance.dynamicAccent") private var dynamicAccent = false
     var body: some View {
         Form {
             Section("Theme") {
@@ -105,6 +106,7 @@ struct AppearanceSettingsView: View {
                 }
                 Toggle("Use system font", isOn: $systemFont)
                 Toggle("Random accent on startup", isOn: $randomAccent)
+                Toggle("Use colors from song artwork", isOn: $dynamicAccent)
                 NavigationLink("Theme creator") { ThemeCreatorView() }
                 NavigationLink("Navigation and library") { LayoutSettingsView() }
                 NavigationLink("Player appearance") { PlayerAppearanceSettingsView() }
@@ -174,6 +176,7 @@ struct LayoutSettingsView: View {
     @AppStorage("appearance.homeChips") private var chips = true
     @AppStorage("appearance.slimNav") private var slim = false
     @AppStorage("appearance.swipeQueue") private var swipeQueue = false
+    @AppStorage("appearance.libraryTags") private var libraryTags = true
     @AppStorage("appearance.showLiked") private var liked = true
     @AppStorage("appearance.showDownloaded") private var downloaded = true
     @AppStorage("appearance.showTop") private var top = true
@@ -189,6 +192,7 @@ struct LayoutSettingsView: View {
             Toggle("Show Home category chips", isOn: $chips)
             Toggle("Slim bottom navigation", isOn: $slim)
             Toggle("Swipe songs to queue them", isOn: $swipeQueue)
+            Toggle("Show playlist tags in library", isOn: $libraryTags)
             Section("Automatic playlists") {
                 Toggle("Show Liked", isOn: $liked)
                 Toggle("Show Downloaded", isOn: $downloaded)
@@ -207,20 +211,42 @@ struct PlayerAppearanceSettingsView: View {
     @AppStorage("appearance.compactMini") private var compactMini = false
     @AppStorage("appearance.accentButtons") private var accentButtons = false
     @AppStorage("appearance.playerCompact") private var compactPlayer = false
+    @AppStorage("appearance.photoVersion") private var photoVersion = 0
+    @AppStorage("appearance.disableBlur") private var disableBlur = false
+    @AppStorage("appearance.sliderStyle") private var sliderStyle = "Standard"
+    @State private var selectingPhoto = false
+    @State private var message: String?
 
     var body: some View {
         Form {
             Picker("Player background", selection: $background) {
-                ForEach(["Gradient", "Solid", "Blurred artwork"], id: \.self) { Text($0) }
+                ForEach(["Gradient", "Solid", "Blurred artwork", "Photo"], id: \.self) { Text($0) }
+            }
+            if background == "Photo" {
+                Button("Choose background photo") { selectingPhoto = true }
+                if let message = message { Text(message).font(.caption) }
             }
             Toggle("Hide player thumbnail", isOn: $hideArtwork)
+            Toggle("Disable blur effects", isOn: $disableBlur)
             Toggle("Crop player artwork to square", isOn: $crop)
             Toggle("Swipe artwork to change song", isOn: $swipe)
             if swipe { Slider(value: $swipeDistance, in: 28...100) { Text("Swipe distance") } }
             Toggle("Compact mini player", isOn: $compactMini)
             Toggle("Compact player controls", isOn: $compactPlayer)
             Toggle("Use accent color for play button", isOn: $accentButtons)
+            Picker("Player slider style", selection: $sliderStyle) {
+                ForEach(["Standard", "Wavy", "Thick", "Circular", "Simple"], id: \.self) { Text($0) }
+            }
         }.navigationTitle("Player appearance").navigationBarTitleDisplayMode(.inline)
+        .fileImporter(isPresented: $selectingPhoto, allowedContentTypes: [.image]) { result in
+            Task {
+                do {
+                    try await PlayerPhoto.replace(with: result.get())
+                    photoVersion += 1
+                    message = "Background photo saved"
+                } catch { message = error.localizedDescription }
+            }
+        }
     }
 }
 
@@ -250,6 +276,7 @@ struct LyricsSettingsView: View {
 
 struct PlayerSettingsView: View {
     @EnvironmentObject private var player: PlaybackController
+    @EnvironmentObject private var haptics: MusicHaptics
     @AppStorage("player.quality") private var quality = "Automatic"
     @AppStorage("player.metered") private var metered = false
     @AppStorage("player.persistentQueue") private var persistentQueue = false
@@ -276,6 +303,7 @@ struct PlayerSettingsView: View {
                     ForEach(["Automatic", "High", "Low"], id: \.self) { Text($0) }
                 }
                 Toggle("Treat network as metered", isOn: $metered)
+                Toggle("Audio normalization", isOn: $haptics.normalizeAudio)
                 Toggle("Pause at zero device volume", isOn: $pauseAtZero)
                 Toggle("Resume on Bluetooth connect", isOn: $bluetoothStart)
                 Toggle("Progressive skip intervals", isOn: $progressiveSeek)

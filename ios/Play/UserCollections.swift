@@ -6,6 +6,7 @@ struct LocalPlaylist: Identifiable, Codable, Equatable {
     var id = UUID().uuidString
     var name: String
     var songIDs: [String] = []
+    var tags: [String]?
 }
 struct ListeningEntry: Identifiable, Codable {
     var id = UUID().uuidString
@@ -69,6 +70,16 @@ final class UserCollections: ObservableObject {
         state.playlists[index].name = String(value.prefix(120)); persist()
     }
     func deletePlaylist(_ id: String) { state.playlists.removeAll { $0.id == id }; persist() }
+    func setTags(_ text: String, for id: String) {
+        guard let index = state.playlists.firstIndex(where: { $0.id == id }) else { return }
+        var seen = Set<String>()
+        let tags = text.split(whereSeparator: { $0 == "," || $0.isNewline }).compactMap { part -> String? in
+            let tag = String(part.trimmingCharacters(in: .whitespacesAndNewlines).prefix(32))
+            return !tag.isEmpty && seen.insert(tag.lowercased()).inserted ? tag : nil
+        }
+        state.playlists[index].tags = Array(tags.prefix(12))
+        persist()
+    }
     func add(_ song: Song, to playlistID: String) {
         guard let index = state.playlists.firstIndex(where: { $0.id == playlistID }), !state.playlists[index].songIDs.contains(song.id) else { return }
         state.playlists[index].songIDs.append(song.id); persist()
