@@ -29,6 +29,8 @@ targets:
       path: Play/Info.plist
       properties:
         CFBundleDisplayName: Play
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UIAppFonts: [Poppins.ttf]
         UILaunchScreen: {}
         UIBackgroundModes: [audio]
