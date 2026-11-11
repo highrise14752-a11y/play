@@ -321,7 +321,7 @@ final class PlaybackController: ObservableObject {
 
     private func upcomingSong() -> Song? {
         guard let id = current?.id else { return nil }
-        if shuffleEnabled { return queue.filter { $0.id != id }.randomElement() }
+        if shuffleEnabled, let random = queue.filter({ $0.id != id }).randomElement() { return random }
         guard let index = queue.firstIndex(where: { $0.id == id }) else { return nil }
         if queue.indices.contains(index + 1) { return queue[index + 1] }
         return repeatMode == .all ? queue.first : nil

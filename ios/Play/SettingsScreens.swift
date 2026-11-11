@@ -3,26 +3,21 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct SettingsView: View {
-    @State private var query = ""
-    private var searchText: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
+    @State private var searching = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                if searchText.isEmpty {
-                    dashboard
-                } else {
-                    let matches = SettingDestination.allCases.filter { $0.searchTerms.localizedCaseInsensitiveContains(searchText) }
-                    if matches.isEmpty { Text("No matching settings").foregroundColor(.secondary).padding() }
-                    ForEach(matches) { page in
-                        NavigationLink { page.destination } label: {
-                            SettingsRow(title: page.rawValue, subtitle: page.subtitle, icon: page.icon)
-                        }.background(RoundedRectangle(cornerRadius: 18).fill(PlayTheme.surface))
-                    }
-                }
+                dashboard
             }.padding(16)
         }.background(PlayTheme.background).navigationTitle("Settings").navigationBarTitleDisplayMode(.inline).navigationBarHidden(false)
-            .searchable(text: $query, prompt: "Search settings")
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button { searching = true } label: { Image(systemName: "magnifyingglass") }
+                    .accessibilityLabel("Search settings")
+            }
+        }
+        .sheet(isPresented: $searching) { SettingsSearchView() }
     }
     @ViewBuilder private var dashboard: some View {
         HStack(spacing: 16) {
@@ -73,6 +68,33 @@ struct SettingsView: View {
             Text(title.uppercased()).font(PlayTheme.font(10, weight: .medium)).foregroundColor(PlayTheme.accent).padding(.leading, 5)
             VStack(spacing: 0, content: content).background(RoundedRectangle(cornerRadius: 23).fill(PlayTheme.surface))
         }
+    }
+}
+
+private struct SettingsSearchView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var query = ""
+    private var matches: [SettingDestination] {
+        let value = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? SettingDestination.allCases : SettingDestination.allCases.filter { $0.searchTerms.localizedCaseInsensitiveContains(value) }
+    }
+    var body: some View {
+        NavigationView {
+            List {
+                TextField("Find a setting", text: $query)
+                    .accessibilityIdentifier("settings.search.query")
+                if matches.isEmpty { Text("No matching settings").foregroundColor(.secondary) }
+                ForEach(matches) { page in
+                    NavigationLink { page.destination } label: {
+                        SettingsRow(title: page.rawValue, subtitle: page.subtitle, icon: page.icon)
+                    }.accessibilityIdentifier("settings.result.\(page.rawValue)")
+                }
+            }
+            .navigationTitle("Search settings").navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
+            }
+        }.navigationViewStyle(.stack)
     }
 }
 

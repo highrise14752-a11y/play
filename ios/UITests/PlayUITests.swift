@@ -77,5 +77,12 @@ final class PlayUITests: XCTestCase {
             capture(app, title)
             back(app)
         }
+        app.buttons["Search settings"].tap()
+        let field = app.textFields["settings.search.query"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap()
+        field.typeText("crossfade")
+        app.buttons["settings.result.Player and audio"].tap()
+        XCTAssertTrue(app.navigationBars["Player and audio"].waitForExistence(timeout: 5))
     }
 }
