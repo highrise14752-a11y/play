@@ -75,14 +75,19 @@ enum OfflineSilence {
             }
             let samples = UnsafeRawPointer(bytes).assumingMemoryBound(to: Float.self)
             let start = CMSampleBufferGetPresentationTimeStamp(buffer).seconds
-            let frames = CMSampleBufferGetNumSamples(buffer)
-            let duration = Double(frames) / audio.pointee.mSampleRate
-            var peak: Float = 0
-            for index in 0..<(count / MemoryLayout<Float>.size) {
-                let sample = samples[index]
-                if !sample.isFinite || abs(sample) > 0.003 { peak = 1; break }
+            let rate = audio.pointee.mSampleRate
+            let channels = max(1, Int(audio.pointee.mChannelsPerFrame))
+            let frames = min(CMSampleBufferGetNumSamples(buffer), count / MemoryLayout<Float>.size / channels)
+            let window = max(1, Int(rate * 0.02))
+            for first in stride(from: 0, to: frames, by: window) {
+                let last = min(frames, first + window)
+                var peak: Float = 0
+                for index in (first * channels)..<(last * channels) {
+                    let sample = samples[index]
+                    if !sample.isFinite || abs(sample) > 0.003 { peak = 1; break }
+                }
+                detector.consume(start: start + Double(first) / rate, end: start + Double(last) / rate, peak: peak)
             }
-            detector.consume(start: start, end: start + duration, peak: peak)
         }
         guard !Task.isCancelled, reader.status == .completed else { reader.cancelReading(); return [] }
         detector.finish()
