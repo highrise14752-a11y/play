@@ -217,6 +217,8 @@ struct LibraryView: View {
     @AppStorage("appearance.showDownloaded") private var showDownloaded = true
     @AppStorage("appearance.showTop") private var showTop = true
     @AppStorage("appearance.libraryTags") private var showTags = true
+    @AppStorage("appearance.libraryGrid") private var libraryGrid = false
+    @AppStorage("appearance.gridSize") private var gridSize = 125.0
     @AppStorage("content.topCount") private var topCount = 50
     @State private var query = ""
     @State private var sort = "Date added"
@@ -262,7 +264,7 @@ struct LibraryView: View {
                 TextField("Search your library", text: $query).padding(12).background(RoundedRectangle(cornerRadius: 18).fill(PlayTheme.surface)).padding(.horizontal, 16)
             }
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
+                collectionLayout {
                     if section == "Playlists" {
                         if showLiked { NavigationLink { AutoCollectionView(kind: "Liked") } label: { collectionRow("Liked", icon: "heart") } }
                         if showDownloaded { NavigationLink { AutoCollectionView(kind: "Downloaded") } label: { collectionRow("Downloaded", icon: "arrow.down.circle") } }
@@ -309,15 +311,35 @@ struct LibraryView: View {
             }
         }
     }
-    private func collectionRow(_ title: String, icon: String, subtitle: String? = nil) -> some View {
-        HStack(spacing: 13) {
-            Image(systemName: icon).font(.system(size: 23)).foregroundColor(PlayTheme.accent).frame(width: 48, height: 48).background(RoundedRectangle(cornerRadius: 7).fill(PlayTheme.surface))
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(PlayTheme.font(14, weight: .medium)).foregroundColor(.primary)
-                if let subtitle = subtitle { Text(subtitle).font(PlayTheme.font(11)).foregroundColor(.secondary) }
-            }
-            Spacer()
-        }.padding(.vertical, 4)
+    @ViewBuilder private func collectionLayout<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        if libraryGrid && section != "Songs" {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: gridSize), spacing: 12)], alignment: .leading, spacing: 12, content: content)
+        } else {
+            LazyVStack(alignment: .leading, spacing: 12, content: content)
+        }
+    }
+    @ViewBuilder private func collectionRow(_ title: String, icon: String, subtitle: String? = nil) -> some View {
+        if libraryGrid {
+            VStack(alignment: .leading, spacing: 8) {
+                Image(systemName: icon).font(.system(size: 28)).foregroundColor(PlayTheme.accent)
+                    .frame(maxWidth: .infinity).frame(height: 68)
+                collectionTitle(title, subtitle: subtitle)
+            }.frame(maxWidth: .infinity, alignment: .leading).padding(10)
+                .background(RoundedRectangle(cornerRadius: 13).fill(PlayTheme.surface))
+        } else {
+            HStack(spacing: 13) {
+                Image(systemName: icon).font(.system(size: 23)).foregroundColor(PlayTheme.accent).frame(width: 48, height: 48)
+                    .background(RoundedRectangle(cornerRadius: 7).fill(PlayTheme.surface))
+                collectionTitle(title, subtitle: subtitle)
+                Spacer()
+            }.padding(.vertical, 4)
+        }
+    }
+    private func collectionTitle(_ title: String, subtitle: String?) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(PlayTheme.font(14, weight: .medium)).foregroundColor(.primary).lineLimit(2)
+            if let subtitle = subtitle { Text(subtitle).font(PlayTheme.font(11)).foregroundColor(.secondary).lineLimit(2) }
+        }
     }
 }
 

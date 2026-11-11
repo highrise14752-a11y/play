@@ -3,45 +3,63 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct SettingsView: View {
+    @State private var query = ""
+    private var searchText: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                HStack(spacing: 16) {
-                    Image("PlayLogo").resizable().scaledToFit().frame(width: 64, height: 64)
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("Play").font(PlayTheme.font(30, weight: .bold))
-                        Text("Music. Your way.").font(PlayTheme.font(12)).foregroundColor(.secondary)
+                if searchText.isEmpty {
+                    dashboard
+                } else {
+                    let matches = SettingDestination.allCases.filter { $0.searchTerms.localizedCaseInsensitiveContains(searchText) }
+                    if matches.isEmpty { Text("No matching settings").foregroundColor(.secondary).padding() }
+                    ForEach(matches) { page in
+                        NavigationLink { page.destination } label: {
+                            SettingsRow(title: page.rawValue, subtitle: page.subtitle, icon: page.icon)
+                        }.background(RoundedRectangle(cornerRadius: 18).fill(PlayTheme.surface))
                     }
-                    Spacer()
-                }.padding(20).background(RoundedRectangle(cornerRadius: 25).fill(PlayTheme.accent.opacity(0.12)))
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 14) {
-                        quick("Appearance", icon: "paintpalette") { AppearanceSettingsView() }
-                        quick("Player", icon: "play.fill") { PlayerSettingsView() }
-                        quick("Storage", icon: "externaldrive") { StorageSettingsView() }
-                        quick("Privacy", icon: "hand.raised") { PrivacySettingsView() }
-                        quick("Together", icon: "person.2") { TogetherView() }
-                    }
-                }
-                group("Interface") {
-                    NavigationLink { AppearanceSettingsView() } label: { SettingsRow(title: "Appearance", subtitle: "Theme and lyrics", icon: "paintpalette") }.accessibilityIdentifier("settings.appearance")
-                }
-                group("Player and content") {
-                    NavigationLink { PlayerSettingsView() } label: { SettingsRow(title: "Player and audio", subtitle: "Playback, haptics and sleep timer", icon: "play.fill") }.accessibilityIdentifier("settings.player")
-                    NavigationLink { TogetherView() } label: { SettingsRow(title: "Music Together", subtitle: "Listen with friends", icon: "person.2") }.accessibilityIdentifier("settings.together")
-                    NavigationLink { ContentSettingsView() } label: { SettingsRow(title: "Content", subtitle: "Language and region", icon: "globe") }.accessibilityIdentifier("settings.content")
-                }
-                group("Privacy and storage") {
-                    NavigationLink { PrivacySettingsView() } label: { SettingsRow(title: "Privacy", subtitle: "Listening history", icon: "hand.raised") }.accessibilityIdentifier("settings.privacy")
-                    NavigationLink { StorageSettingsView() } label: { SettingsRow(title: "Storage", subtitle: "Downloads and cache", icon: "externaldrive") }.accessibilityIdentifier("settings.storage")
-                    NavigationLink { BackupSettingsView() } label: { SettingsRow(title: "Backup and restore", subtitle: "Library and playlists", icon: "icloud.and.arrow.up") }.accessibilityIdentifier("settings.backup")
-                }
-                group("App") {
-                    NavigationLink { AboutSettingsView() } label: { SettingsRow(title: "About", subtitle: "Play", icon: "info.circle") }.accessibilityIdentifier("settings.about")
                 }
             }.padding(16)
         }.background(PlayTheme.background).navigationTitle("Settings").navigationBarTitleDisplayMode(.inline).navigationBarHidden(false)
+            .searchable(text: $query, prompt: "Search settings")
     }
+    @ViewBuilder private var dashboard: some View {
+        HStack(spacing: 16) {
+            Image("PlayLogo").resizable().scaledToFit().frame(width: 64, height: 64)
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Play").font(PlayTheme.font(30, weight: .bold))
+                Text("Music. Your way.").font(PlayTheme.font(12)).foregroundColor(.secondary)
+            }
+            Spacer()
+        }.padding(20).background(RoundedRectangle(cornerRadius: 25).fill(PlayTheme.accent.opacity(0.12)))
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 14) {
+                quick("Appearance", icon: "paintpalette") { AppearanceSettingsView() }
+                quick("Player", icon: "play.fill") { PlayerSettingsView() }
+                quick("Storage", icon: "externaldrive") { StorageSettingsView() }
+                quick("Privacy", icon: "hand.raised") { PrivacySettingsView() }
+                quick("Together", icon: "person.2") { TogetherView() }
+            }
+        }
+        group("Interface") {
+            NavigationLink { AppearanceSettingsView() } label: { SettingsRow(title: "Appearance", subtitle: "Theme and lyrics", icon: "paintpalette") }.accessibilityIdentifier("settings.appearance")
+        }
+        group("Player and content") {
+            NavigationLink { PlayerSettingsView() } label: { SettingsRow(title: "Player and audio", subtitle: "Playback, haptics and sleep timer", icon: "play.fill") }.accessibilityIdentifier("settings.player")
+            NavigationLink { TogetherView() } label: { SettingsRow(title: "Music Together", subtitle: "Listen with friends", icon: "person.2") }.accessibilityIdentifier("settings.together")
+            NavigationLink { ContentSettingsView() } label: { SettingsRow(title: "Content", subtitle: "Language and region", icon: "globe") }.accessibilityIdentifier("settings.content")
+        }
+        group("Privacy and storage") {
+            NavigationLink { PrivacySettingsView() } label: { SettingsRow(title: "Privacy", subtitle: "Listening history", icon: "hand.raised") }.accessibilityIdentifier("settings.privacy")
+            NavigationLink { StorageSettingsView() } label: { SettingsRow(title: "Storage", subtitle: "Downloads and cache", icon: "externaldrive") }.accessibilityIdentifier("settings.storage")
+            NavigationLink { BackupSettingsView() } label: { SettingsRow(title: "Backup and restore", subtitle: "Library and playlists", icon: "icloud.and.arrow.up") }.accessibilityIdentifier("settings.backup")
+        }
+        group("App") {
+            NavigationLink { AboutSettingsView() } label: { SettingsRow(title: "About", subtitle: "Play", icon: "info.circle") }.accessibilityIdentifier("settings.about")
+        }
+    }
+
     private func quick<Destination: View>(_ title: String, icon: String, @ViewBuilder destination: () -> Destination) -> some View {
         NavigationLink(destination: destination()) {
             VStack(spacing: 9) {
@@ -54,6 +72,67 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title.uppercased()).font(PlayTheme.font(10, weight: .medium)).foregroundColor(PlayTheme.accent).padding(.leading, 5)
             VStack(spacing: 0, content: content).background(RoundedRectangle(cornerRadius: 23).fill(PlayTheme.surface))
+        }
+    }
+}
+
+private enum SettingDestination: String, CaseIterable, Identifiable {
+    case appearance = "Appearance"
+    case layout = "Navigation and library"
+    case playerAppearance = "Player appearance"
+    case lyrics = "Lyrics"
+    case audio = "Player and audio"
+    case haptics = "Music haptics"
+    case content = "Content"
+    case privacy = "Privacy"
+    case storage = "Storage"
+    case backup = "Backup and restore"
+    case together = "Music Together"
+    case about = "About"
+
+    var id: Self { self }
+    var searchTerms: String { rawValue + " " + subtitle }
+    var icon: String {
+        switch self {
+        case .appearance, .layout, .playerAppearance: return "paintpalette"
+        case .lyrics, .content: return "text.quote"
+        case .audio, .haptics: return "waveform"
+        case .storage, .backup: return "externaldrive"
+        case .privacy: return "hand.raised"
+        case .together: return "person.2"
+        case .about: return "info.circle"
+        }
+    }
+    var subtitle: String {
+        switch self {
+        case .appearance: return "Theme, colors, fonts"
+        case .layout: return "Tabs, grid, playlist tags"
+        case .playerAppearance: return "Background, photo, slider, thumbnail"
+        case .lyrics: return "Animation, alignment, scrolling, spacing"
+        case .audio: return "Quality, crossfade, silence, queue, sleep timer"
+        case .haptics: return "Vibration, intensity, Low Power Mode"
+        case .content: return "Language, region, explicit content, lyrics providers"
+        case .privacy: return "Listening history, recent searches"
+        case .storage: return "Download location, Files folder, cache"
+        case .backup: return "Export and import library data"
+        case .together: return "Host or join a session"
+        case .about: return "Version and licenses"
+        }
+    }
+    @ViewBuilder var destination: some View {
+        switch self {
+        case .appearance: AppearanceSettingsView()
+        case .layout: LayoutSettingsView()
+        case .playerAppearance: PlayerAppearanceSettingsView()
+        case .lyrics: LyricsSettingsView()
+        case .audio: PlayerSettingsView()
+        case .haptics: HapticsSettingsView()
+        case .content: ContentSettingsView()
+        case .privacy: PrivacySettingsView()
+        case .storage: StorageSettingsView()
+        case .backup: BackupSettingsView()
+        case .together: TogetherView()
+        case .about: AboutSettingsView()
         }
     }
 }
@@ -177,6 +256,8 @@ struct LayoutSettingsView: View {
     @AppStorage("appearance.slimNav") private var slim = false
     @AppStorage("appearance.swipeQueue") private var swipeQueue = false
     @AppStorage("appearance.libraryTags") private var libraryTags = true
+    @AppStorage("appearance.libraryGrid") private var libraryGrid = false
+    @AppStorage("appearance.gridSize") private var gridSize = 125.0
     @AppStorage("appearance.showLiked") private var liked = true
     @AppStorage("appearance.showDownloaded") private var downloaded = true
     @AppStorage("appearance.showTop") private var top = true
@@ -193,6 +274,10 @@ struct LayoutSettingsView: View {
             Toggle("Slim bottom navigation", isOn: $slim)
             Toggle("Swipe songs to queue them", isOn: $swipeQueue)
             Toggle("Show playlist tags in library", isOn: $libraryTags)
+            Toggle("Use library grid", isOn: $libraryGrid)
+            if libraryGrid {
+                Slider(value: $gridSize, in: 100...170, step: 5) { Text("Library grid cell size") }
+            }
             Section("Automatic playlists") {
                 Toggle("Show Liked", isOn: $liked)
                 Toggle("Show Downloaded", isOn: $downloaded)
@@ -370,6 +455,7 @@ struct ContentSettingsView: View {
     @AppStorage("content.hideExplicit") private var hideExplicit = false
     @AppStorage("content.hideVideos") private var hideVideos = false
     @AppStorage("content.topCount") private var topCount = 50
+    @AppStorage("content.quickPicks") private var quickPicks = "Quick picks"
     @AppStorage("lyrics.preferredSource") private var preferred = LyricSource.lrcLib.rawValue
     @AppStorage("lyrics.preload") private var preload = false
     @AppStorage("lyrics.preloadCount") private var preloadCount = 3
@@ -385,6 +471,10 @@ struct ContentSettingsView: View {
             Toggle("Hide music videos", isOn: $hideVideos)
             Picker("Top playlist length", selection: $topCount) {
                 ForEach([10, 25, 50, 100, 200], id: \.self) { Text("\($0) songs").tag($0) }
+            }
+            Picker("Home suggestions", selection: $quickPicks) {
+                Text("Quick picks").tag("Quick picks")
+                Text("Last song listened").tag("Last song listened")
             }
             Section("Lyrics providers") {
                 ForEach(LyricSource.allCases) { source in LyricsProviderToggle(source: source) }

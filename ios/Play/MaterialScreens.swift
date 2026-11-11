@@ -170,7 +170,7 @@ struct CategoryChips: View {
                     Button { selection = choice } label: {
                         Text(choice).font(PlayTheme.font(12)).padding(.horizontal, 15).padding(.vertical, 8)
                             .background(Capsule().fill(selection == choice ? PlayTheme.accent.opacity(0.27) : PlayTheme.surface))
-                            .foregroundColor(selection == choice ? PlayTheme.accent : .white.opacity(0.75))
+                            .foregroundColor(selection == choice ? PlayTheme.accent : .secondary)
                     }
                 }
             }.padding(.horizontal, 16)
@@ -187,12 +187,16 @@ struct HomeView: View {
     @AppStorage("content.hideVideos") private var hideVideos = false
     @AppStorage("content.language") private var language = "en"
     @AppStorage("content.region") private var region = "US"
+    @AppStorage("content.quickPicks") private var quickPicks = "Quick picks"
+    @State private var relatedPicks: [Song] = []
     private let moods = ["All", "Workout", "Relax", "Focus", "Sleep", "Party", "Romance", "Energy"]
     private var recent: [Song] {
         var seen = Set<String>()
         return collections.state.history.map(\.song).filter { seen.insert($0.id).inserted }.prefix(12).map { $0 }
     }
     var body: some View {
+        let seed = quickPicks == "Last song listened" && feed.category == nil ? collections.state.history.first?.song : nil
+        let picks = relatedPicks.isEmpty ? feed.songs : relatedPicks
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 18) {
                 if showChips {
@@ -223,13 +227,15 @@ struct HomeView: View {
                             }
                         }.padding(.horizontal, 16)
                     }
+                }
+                if !picks.isEmpty {
                     HStack {
-                        Text("Quick picks").font(PlayTheme.font(21, weight: .medium))
+                        Text(relatedPicks.isEmpty ? "Quick picks" : "Because you listened").font(PlayTheme.font(21, weight: .medium))
                         Spacer()
-                        Button("Play all") { if let song = feed.songs.first { library.play(song, in: feed.songs) } }
+                        Button("Play all") { if let song = picks.first { library.play(song, in: picks) } }
                             .font(PlayTheme.font(11)).padding(.horizontal, 12).padding(.vertical, 6).background(Capsule().fill(PlayTheme.surface))
                     }.padding(.horizontal, 18)
-                    ForEach(Array(feed.songs.prefix(8))) { song in SongRow(song: song, queue: feed.songs).padding(.horizontal, 16) }
+                    ForEach(Array(picks.prefix(8))) { song in SongRow(song: song, queue: picks).padding(.horizontal, 16) }
                 }
                 if !recent.isEmpty {
                     Text("Keep listening").font(PlayTheme.font(21, weight: .medium)).padding(.horizontal, 18)
@@ -259,6 +265,11 @@ struct HomeView: View {
             await feed.load(api: library.api)
         }
         .onChange(of: showChips) { if !$0 { feed.category = nil } }
+        .task(id: "\(seed?.id ?? "")|\(language)|\(region)|\(hideExplicit)|\(hideVideos)") {
+            relatedPicks = []
+            guard let seed = seed, !seed.isLocal else { return }
+            if let related = try? await library.api.related(to: seed), !Task.isCancelled { relatedPicks = related }
+        }
     }
 }
 

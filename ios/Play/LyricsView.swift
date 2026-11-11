@@ -8,11 +8,20 @@ struct LyricsView: View {
     @AppStorage("lyrics.follow") private var autoFollow = true
     @AppStorage("lyrics.click") private var clickToSeek = true
     @AppStorage("lyrics.size") private var textSize = 28.0
+    @AppStorage("lyrics.english") private var showEnglish = false
     @AppStorage("lyrics.spacing") private var lineSpacing = 22.0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var browsing = false
     @State private var resumeTask: Task<Void, Never>?
-    private var active: Int? { LyricsParser.activeIndex(in: player.lyrics, at: player.position) }
+    @State private var english: [LyricLine]?
+    @State private var translationError: String?
+    @State private var translating = false
+    private struct TranslationRequest: Hashable {
+        let lines: [LyricLine]
+        let enabled: Bool
+    }
+    private var lines: [LyricLine] { showEnglish ? english ?? player.lyrics : player.lyrics }
+    private var active: Int? { LyricsParser.activeIndex(in: lines, at: player.position) }
     private var alignment: Alignment { position == "Left" ? .leading : position == "Right" ? .trailing : .center }
     private var textAlignment: TextAlignment { position == "Left" ? .leading : position == "Right" ? .trailing : .center }
     private var animation: Animation? {
@@ -21,6 +30,42 @@ struct LyricsView: View {
     }
 
     var body: some View {
+        VStack(alignment: .trailing, spacing: 4) {
+            if !player.lyrics.isEmpty {
+                HStack {
+                    if translating { ProgressView().accessibilityLabel("Translating lyrics") }
+                    if let error = translationError, showEnglish {
+                        Text(error).font(.caption).foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Button {
+                        showEnglish.toggle()
+                    } label: {
+                        Label(showEnglish ? "Original lyrics" : "Translate to English", systemImage: "globe")
+                    }.font(.caption)
+                }.padding(.horizontal, 24)
+            }
+            lyricScroll
+        }
+        .task(id: TranslationRequest(lines: player.lyrics, enabled: showEnglish)) {
+            english = nil
+            translationError = nil
+            translating = false
+            guard showEnglish, !player.lyrics.isEmpty else { return }
+            translating = true
+            do {
+                let translated = try await LyricTranslation.shared.english(player.lyrics)
+                guard !Task.isCancelled else { return }
+                english = translated
+            } catch {
+                guard !Task.isCancelled else { return }
+                translationError = error.localizedDescription
+            }
+            translating = false
+        }
+    }
+
+    private var lyricScroll: some View {
         ScrollViewReader { proxy in
             GeometryReader { geometry in
                 ZStack(alignment: .bottom) {
@@ -31,7 +76,7 @@ struct LyricsView: View {
                     } else {
                         ScrollView {
                             LazyVStack(spacing: lineSpacing) {
-                                ForEach(player.lyrics) { line in
+                                ForEach(lines) { line in
                                     let highlighted = active == line.id
                                     lyricText(line, highlighted: highlighted)
                                         .font(PlayTheme.font(CGFloat(textSize), weight: highlighted ? .bold : .semibold))
@@ -80,7 +125,7 @@ struct LyricsView: View {
             .onChange(of: browsing) { _ in follow(proxy) }
             .onChange(of: autoFollow) { _ in follow(proxy) }
             .onChange(of: position) { _ in follow(proxy) }
-            .task(id: player.lyrics) { await Task.yield(); follow(proxy) }
+            .task(id: lines) { await Task.yield(); follow(proxy) }
             .onDisappear { resumeTask?.cancel() }
         }
     }
@@ -99,8 +144,8 @@ struct LyricsView: View {
         }
     }
     private func progress(_ line: LyricLine) -> Double {
-        guard let start = line.time, let index = player.lyrics.firstIndex(where: { $0.id == line.id }) else { return 0 }
-        let end = player.lyrics.dropFirst(index + 1).compactMap(\.time).first ?? player.duration
+        guard let start = line.time, let index = lines.firstIndex(where: { $0.id == line.id }) else { return 0 }
+        let end = lines.dropFirst(index + 1).compactMap(\.time).first ?? player.duration
         guard end > start else { return 1 }
         return min(1, max(0, (player.position - start) / (end - start)))
     }

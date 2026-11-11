@@ -48,7 +48,7 @@ Android source: `app/src/main/kotlin/com/nikhil/yt/ui/screens/settings/Appearanc
 - Player (`player`): Pending / compare iOS-specific behavior
 - Player design style (`player_design_style`): Compact player controls
 - New mini player design (`new_mini_player_design`): Compact or standard mini player
-- New library design (`new_library_design`): Pending / compare iOS-specific behavior
+- New library design (`new_library_design`): Present in iOS
 - Player background style (`player_background_style`): Solid, gradient, blurred artwork, or a photo selected from Files
 - Customized background (`customized_background`): Present in iOS
 - Hide Player Thumbnail (`hide_player_thumbnail`): Present in iOS
@@ -72,7 +72,7 @@ Android source: `app/src/main/kotlin/com/nikhil/yt/ui/screens/settings/Appearanc
 - Show tags in library (`show_tags_in_library`): Present in iOS
 - Swipe song to the left to add it to the queue or to the right to play it next (`swipe_song_to_add`): Present in iOS
 - Slim bottom navigation bar (`slim_navbar`): Present in iOS
-- Grid cell size (`grid_cell_size`): Pending / compare iOS-specific behavior
+- Grid cell size (`grid_cell_size`): Present in iOS
 - Auto playlists (`auto_playlists`): Pending / compare iOS-specific behavior
 - Show \"Liked\" playlist (`show_liked_playlist`): Present in iOS
 - Show \"Downloaded\" playlist (`show_downloaded_playlist`): Present in iOS
@@ -117,7 +117,7 @@ Android source: `app/src/main/kotlin/com/nikhil/yt/ui/screens/settings/ContentSe
 - Number of songs to preload (`queue_lyrics_preload_count`): Present in iOS
 - Misc (`misc`): Pending / compare iOS-specific behavior
 - My Top list length (`top_length`): Present in iOS
-- Set quick picks (`set_quick_picks`): Pending / compare iOS-specific behavior
+- Set quick picks (`set_quick_picks`): Present in iOS
 - Content (`content`): Pending / compare iOS-specific behavior
 
 ### CustomizeBackground
@@ -263,8 +263,8 @@ Android source: `app/src/main/kotlin/com/nikhil/yt/ui/screens/settings/SettingsS
 - Customize colors (`customize_colors`): Present in iOS
 - Customize background (`customize_background_title`): Present in iOS
 - Play Music Together (`music_together`): Wi-Fi hosting and joining, permissions, approvals, removal, and session bans
-- Internal & subcategory settings (`internal_subcategory_settings`): Pending / compare iOS-specific behavior
-- No results found (`no_results_found`): Pending / compare iOS-specific behavior
+- Internal & subcategory settings (`internal_subcategory_settings`): Present in iOS
+- No results found (`no_results_found`): Present in iOS
 
 ### StorageSettings
 
@@ -297,7 +297,7 @@ Android source: `app/src/main/kotlin/com/nikhil/yt/ui/screens/settings/UpdateScr
 - Private YouTube account synchronization and upstream Play-account services. Public playlists can be imported from a link.
 - Online Together room codes and server configuration need a supported authentication flow. Wi-Fi room approval, moderation, and permissions are implemented.
 - Canvas and additional Android layout variants. The Android Canvas service did not resolve in testing. iOS has artwork colors, a custom photo background, and theme import/export.
-- Lyrics translation and some word-timed formats. The iOS app supports four lyric providers and TTML word timing. Provider results depend on availability.
+- Some word-timed formats beyond TTML. English translation is available from the Lyrics screen, preserves line timing, and depends on translation service availability.
 - Silence skipping for live streams, playback-client selection, and Android-specific audio routing. Crossfade and saved-audio silence skipping are implemented.
 - Android offload, USB audio, notification/default-link behavior and Android Auto need platform-specific iOS treatment; some require Apple entitlements.
 - Android backup database files are not interchangeable with the native iOS JSON backup.

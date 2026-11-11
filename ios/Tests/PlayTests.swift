@@ -5,6 +5,12 @@ import UIKit
 @testable import Play
 
 final class PlayTests: XCTestCase {
+    func testLyricTranslationKeepsLineBoundariesAndRejectsMergedLines() throws {
+        let response = #"[[["Hello\n","Bonjour\n"],["I am here","Je suis ici"]],null,"fr"]"#
+        let data = Data(response.utf8)
+        XCTAssertEqual(try LyricTranslation.translatedLines(from: data, expected: 2), ["Hello", "I am here"])
+        XCTAssertThrowsError(try LyricTranslation.translatedLines(from: data, expected: 3))
+    }
     private func wave(_ segments: [(seconds: Double, amplitude: Int16)]) -> Data {
         let sampleRate = 8000
         let count = segments.reduce(0) { $0 + Int($1.seconds * Double(sampleRate)) } * 2
